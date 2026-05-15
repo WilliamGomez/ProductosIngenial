@@ -1,0 +1,169 @@
+/* =============================================================================
+ * Votometro · Design tokens (Tailwind v4 @theme)
+ * -----------------------------------------------------------------------------
+ * Filosofía: "Clean & Professional" inspirada en Tabler/Vuexy. Paleta basada
+ * en blanco + grises slate + un azul corporativo. Tipografía Inter con
+ * tabular-nums activadas para que las datatables alineen los dígitos.
+ *
+ * DECISIÓN — sobreescribir la paleta `orange` de Tailwind:
+ *   Los componentes legacy (UsersAdmin, Sidebar, Navbar antiguo, etc.) usaban
+ *   `bg-orange-500`, `text-orange-500`, `bg-orange-100`, etc. como color de
+ *   marca. En vez de hacer find/replace en decenas de archivos (con riesgo
+ *   de romper imports y branches), redefinimos la escala `orange` en @theme
+ *   apuntando a los hex del NUEVO azul corporativo. Tailwind v4 genera las
+ *   utilidades desde estos tokens, así que `bg-orange-500` automáticamente
+ *   dibuja azul. La nueva escala `brand-*` se ofrece para componentes
+ *   nuevos (semánticamente correcta). Cuando haya tiempo, hacer find/replace
+ *   `orange-` → `brand-` y eliminar el override de `orange-*` de aquí.
+ *
+ * Paleta brand (azul corporativo Tabler-like):
+ *   50  #eff6ff   (fondos suaves, hover de filas)
+ *   100 #dbeafe   (chips de selección, icons bg)
+ *   200 #bfdbfe   (focus rings)
+ *   300 #93c5fd
+ *   400 #60a5fa
+ *   500 #3b82f6   (acciones secundarias)
+ *   600 #2563eb   ★ PRIMARY — botones, links, active states
+ *   700 #1d4ed8   (hover de primary)
+ *   800 #1e40af
+ *   900 #1e3a8a   (texto sobre fondos brand-50)
+ *   950 #172554   (deep brand para hero/dark)
+ *
+ * Status semántico:
+ *   success → emerald (verde frío, profesional, no chillón)
+ *   danger  → rose    (rojo cálido)
+ *   warning → amber
+ *   info    → sky
+ * ============================================================================= */
+
+@import "tailwindcss";
+@plugin "daisyui";
+
+@theme {
+    /* --------------------------------------------------------------------- */
+    /* Brand semantic tokens (uso preferido en componentes nuevos)           */
+    /* --------------------------------------------------------------------- */
+    --color-brand-50: #eff6ff;
+    --color-brand-100: #dbeafe;
+    --color-brand-200: #bfdbfe;
+    --color-brand-300: #93c5fd;
+    --color-brand-400: #60a5fa;
+    --color-brand-500: #3b82f6;
+    --color-brand-600: #2563eb;
+    --color-brand-700: #1d4ed8;
+    --color-brand-800: #1e40af;
+    --color-brand-900: #1e3a8a;
+    --color-brand-950: #172554;
+
+    /* --------------------------------------------------------------------- */
+    /* OVERRIDE de la paleta `orange` legacy → mismos hex que `brand`.       */
+    /* (Ver decisión en el header de este archivo.)                          */
+    /* --------------------------------------------------------------------- */
+    --color-orange-50: #eff6ff;
+    --color-orange-100: #dbeafe;
+    --color-orange-200: #bfdbfe;
+    --color-orange-300: #93c5fd;
+    --color-orange-400: #60a5fa;
+    --color-orange-500: #2563eb; /* legacy "orange-500" → ahora primary brand-600 */
+    --color-orange-600: #1d4ed8;
+    --color-orange-700: #1e40af;
+    --color-orange-800: #1e3a8a;
+    --color-orange-900: #172554;
+
+    /* --------------------------------------------------------------------- */
+    /* Tipografía                                                            */
+    /* --------------------------------------------------------------------- */
+    --font-sans: "Inter", "Inter Fallback", system-ui, -apple-system,
+        "Segoe UI", Roboto, sans-serif;
+    --font-display: "Inter", system-ui, sans-serif;
+
+    /* Border radius más suaves para look moderno */
+    --radius-xl: 0.875rem;
+    --radius-2xl: 1.125rem;
+}
+
+/* ---------------------------------------------------------------------------
+ * Globals — body bg, smoothing, tabular nums
+ * ------------------------------------------------------------------------- */
+html {
+    -webkit-text-size-adjust: 100%;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    /* Activar variantes opentype: cv02/cv03/cv04 = Inter "alt 1, 4, t"
+       (variantes más legibles); ss01 = stylistic set 1 (terminales suaves);
+       cv11 = single-storey "a"/"g" para look más geométrico. */
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+}
+
+body {
+    /* slate-50 — el "off-white" base de Tabler/Vuexy. */
+    background-color: #f8fafc;
+    color: #0f172a; /* slate-900 — alto contraste para texto principal */
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+/* Datatables: alinear dígitos para que columnas numéricas se vean limpias. */
+table,
+.tabular-nums {
+    font-variant-numeric: tabular-nums;
+}
+
+/* Scrollbars sutiles (estilo macOS / Tabler) */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: #cbd5e1 transparent; /* slate-300 */
+}
+*::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+*::-webkit-scrollbar-track {
+    background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+    background-color: #cbd5e1;
+    border-radius: 9999px;
+}
+*::-webkit-scrollbar-thumb:hover {
+    background-color: #94a3b8; /* slate-400 */
+}
+
+/* Anillos de foco accesibles (azul brand sobre cualquier fondo) */
+:focus-visible {
+    outline: 2px solid #2563eb;
+    outline-offset: 2px;
+    border-radius: 6px;
+}
+
+/* Animación sutil para fade-in de cards al montar */
+@keyframes fade-in-up {
+    from {
+        opacity: 0;
+        transform: translateY(4px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+.animate-fade-in-up {
+    animation: fade-in-up 0.25s ease-out;
+}
+
+.reportClass {
+  width: 100%;
+  /* Usamos vh (viewport height) para ocupar la pantalla completa. 
+     Le restamos unos píxeles (ej. 64px) para dejarle espacio a tu barra superior/menú */
+  height: calc(100vh - 64px); 
+  border: none;
+  display: block;
+}
+
+.reportClass iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+}

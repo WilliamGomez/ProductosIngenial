@@ -1,0 +1,476 @@
+# =============================================================================
+# Votometro · docker-compose.yml (Local-First · Hardened)
+# -----------------------------------------------------------------------------
+# Servicios:
+#   · database  → SQL Server 2022 (persistente en volumen nombrado)
+#   · db-init   → one-shot: aplica db/init/*.sql via sqlcmd cuando DB esté healthy
+#   · backend   → Azure Functions Python (espera a db-init success)
+#   · frontend  → React SPA servido por nginx non-root
+# =============================================================================
+
+name: votometro
+
+networks:
+  votometro-network:
+    name: votometro-network
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.enable_icc: "true"
+      com.docker.network.bridge.enable_ip_masquerade: "true"
+    ipam:
+      config:
+        - subnet: 172.29.0.0/24
+
+volumes:
+  sqldata:
+    name: votometro-sqldata
+
+services:
+
+  # =========================================================================
+  #  Base de datos — SQL Server 2022 (persistente)
+  # =========================================================================
+  database:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: votometro-db
+    restart: unless-stopped
+    platform: linux/amd64
+
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: "Developer"
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:?MSSQL_SA_PASSWORD requerido en .env}
+      TZ: "America/Bogota"
+
+    # NOTA (fix WSL2/Windows): publicamos en 0.0.0.0 del host VM (omitiendo
+    # 127.0.0.1) para que Docker Desktop reenvie correctamente al localhost
+    # de Windows. Bindear a 127.0.0.1 dentro de la VM WSL2 hace que el proxy
+    # de Docker Desktop no exponga el puerto al host Windows en algunos
+    # modos de red (en particular networkingMode=mirrored).
+    ports:
+      - "1433:1433"
+
+    volumes:
+      - sqldata:/var/opt/mssql
+
+    networks:
+      - votometro-network
+
+    healthcheck:
+      # FIX healthcheck "unhealthy" (evidencia: el container reportaba
+      # "Sqlcmd: Command -N: Invalid Parameters passed."):
+      #   El binario /opt/mssql-tools18/bin/sqlcmd en la imagen
+      #   mcr.microsoft.com/mssql/server:2022-latest es la versión legacy
+      #   basada en ODBC, donde -N es BOOLEANA (no admite valor). Las
+      #   sintaxis `-No`, `-N optional`, `-N true` que están en docs más
+      #   recientes son del go-sqlcmd v1.x — no de éste. Solución: sólo
+      #   `-C` (trust del cert self-signed) y dejar que sqlcmd negocie la
+      #   encriptación con el server según su configuración por defecto.
+      test:
+        - CMD-SHELL
+        - |
+          /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U SA -P "$${MSSQL_SA_PASSWORD}" -Q "SELECT 1" -b -l 5
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 90s
+
+    # --- Hardening ---
+    # FIX (sqlservr exit 126 / "Operation not permitted"):
+    #   El binario /opt/mssql/bin/sqlservr lleva file-capabilities
+    #   (setcap cap_net_bind_service,cap_sys_ptrace,...) porque la imagen
+    #   ya corre como usuario `mssql` no-root y necesita esas caps. Si
+    #   combinamos `cap_drop: ALL` (que vacía el bounding set) con
+    #   `no-new-privileges: true` (que activa PR_SET_NO_NEW_PRIVS), el
+    #   kernel devuelve EPERM en el `execve()` del launcher y el
+    #   contenedor entra en restart loop antes de aceptar TCP/1433.
+    #
+    #   El aislamiento esencial sigue (la imagen oficial ya corre como
+    #   mssql, no como root). Mantenemos el hardening fuerte en backend
+    #   y frontend, que sí soportan cap_drop:ALL + read_only sin chocar
+    #   con sus runtimes.
+    cap_drop:
+      - NET_RAW
+      - AUDIT_WRITE
+
+    # LÍMITES CORREGIDOS: PIDs dentro del bloque deploy
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: "2g"
+          pids: 512
+        reservations:
+          cpus: "0.5"
+          memory: "1g"
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # =========================================================================
+  #  db-init — one-shot: aplica db/init/*.sql
+  # =========================================================================
+  db-init:
+    # Reutilizamos la MISMA imagen que el servicio `database` para
+    # garantizar que sqlcmd está en /opt/mssql-tools18/bin/sqlcmd (ya lo
+    # verificamos en runtime). Beneficios: una sola imagen para descargar,
+    # cero sorpresas de layout entre builds del image mssql-tools.
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    platform: linux/amd64
+    container_name: votometro-db-init
+    depends_on:
+      database:
+        condition: service_healthy
+    networks:
+      - votometro-network
+    volumes:
+      - ./db/init:/init:ro
+    environment:
+      AzureWebJobsStorage: "UseDevelopmentStorage=true"
+      FUNCTIONS_WORKER_RUNTIME: python
+      AzureFunctionsJobHost__Logging__Console__IsEnabled: "true"
+      ASPNETCORE_URLS: "http://+:7071"
+      LOCAL_AUTH_BYPASS: "false"               # <--- ¡AQUÍ ESTÁ LA LÍNEA QUE FALTA!
+      TENANT_ID: ${TENANT_ID}
+      MS_CLIENT_ID: ${MS_CLIENT_ID}
+      POWER_BI_GROUP_ID: ${POWER_BI_GROUP_ID}
+      SQL_CONNECTION_STRING: ${SQL_CONNECTION_STRING}
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:?MSSQL_SA_PASSWORD requerido en .env}
+      # ------------------------------------------------------------------
+      # Bootstrap del primer Admin local. Vacíos por defecto → 04_bootstrap_admin.sql
+      # entra al `RETURN` y no hace nada. Cuando se setean en `.env`, db-init los
+      # pasa al script con `sqlcmd -v OID=... EMAIL=...` y se siembra/promueve el
+      # usuario como Admin. El OID se obtiene la primera vez con `jwt.ms` o
+      # decodificando el id_token de MSAL en sessionStorage.
+      # ------------------------------------------------------------------
+      BOOTSTRAP_ADMIN_OID: ${BOOTSTRAP_ADMIN_OID:-}
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
+    # La imagen mssql/server tiene un ENTRYPOINT que arranca el motor;
+    # lo sobreescribimos con un script de inicialización one-shot.
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        set -u
+        SQLCMD=/opt/mssql-tools18/bin/sqlcmd
+
+        echo "[db-init] esperando a que SQL Server acepte conexiones..."
+        ready=0
+        for i in $$(seq 1 60); do
+          if "$$SQLCMD" -C -I -S database -U SA -P "$${MSSQL_SA_PASSWORD}" -Q "SELECT 1" -b -l 5 > /dev/null 2>&1; then
+            ready=1
+            break
+          fi
+          sleep 2
+        done
+        if [ "$$ready" -ne 1 ]; then
+          echo "[db-init] ERROR: SQL Server no aceptó conexiones en 120s"
+          exit 1
+        fi
+
+        # ---------------------------------------------------------------
+        # IDEMPOTENCY GATE (compuesto · 2 centinelas)
+        # ---------------------------------------------------------------
+        # Centinela 1 — `dbo.Departments`: marca si el schema BASE
+        #   (01_base_schema.sql) ya fue aplicado. NO es idempotente: usa
+        #   CREATE TABLE crudo del dump de Azure SQL, así que re-aplicarlo
+        #   reventaría con "Msg 2714: There is already an object named ...".
+        #
+        # Centinela 2 — `dbo.Permissions`: marca si el módulo RBAC
+        #   (03_rbac.sql) ya fue aplicado. SÍ es idempotente: usa guards
+        #   IF OBJECT_ID + IF NOT EXISTS, así que se puede re-correr sin
+        #   riesgo. Al ser dos archivos independientes con propiedades de
+        #   idempotencia distintas, evaluamos cada uno por separado.
+        #
+        # Lógica:
+        #   · DEP existe + PERMS existe  → todo aplicado, SKIP completo.
+        #   · DEP no existe              → primer arranque, aplicar TODO.
+        #   · DEP existe + PERMS NO      → BD vieja sin RBAC, aplicar
+        #                                  SOLO los scripts idempotentes
+        #                                  (03_*.sql en adelante).
+        #
+        # Trade-off conocido: si en el futuro se añaden scripts (04_*.sql,
+        # 05_*.sql) que NO sean idempotentes y deban aplicarse sobre un
+        # schema existente, el patrón correcto será introducir una tabla
+        # `__migrations(applied_at, script_name)`. Mientras todos los
+        # scripts >= 03 sean idempotentes, este gate compuesto basta.
+        # ---------------------------------------------------------------
+        # Refactor DIVIPOLA: el gate del schema base debe mirar tablas core
+        # persistentes. Departments/Municipalities ya no son centinelas validos.
+        echo "[db-init] verificando estado del schema (gate compuesto)..."
+        BASE_EXISTS=$$("$$SQLCMD" -C -I -h -1 -W -S database -U SA -P "$${MSSQL_SA_PASSWORD}" \
+            -d sqldb-ingenial-ia \
+            -Q "SET NOCOUNT ON; IF OBJECT_ID('dbo.Users','U') IS NOT NULL OR OBJECT_ID('dbo.Products','U') IS NOT NULL OR OBJECT_ID('dbo.DIVIPOLA','U') IS NOT NULL PRINT '1' ELSE PRINT '0'" \
+            -b 2>/dev/null | tr -d '[:space:]')
+        PERMS_EXISTS=$$("$$SQLCMD" -C -I -h -1 -W -S database -U SA -P "$${MSSQL_SA_PASSWORD}" \
+            -d sqldb-ingenial-ia \
+            -Q "SET NOCOUNT ON; IF OBJECT_ID('dbo.Permissions','U') IS NOT NULL PRINT '1' ELSE PRINT '0'" \
+            -b 2>/dev/null | tr -d '[:space:]')
+
+        # Por defecto aplicamos todos los scripts. Si el schema BASE ya
+        # existe, restringimos el match a los scripts idempotentes (>=03).
+        SCRIPT_GLOB='[0-9][0-9]_*.sql'
+
+        if [ "$$BASE_EXISTS" = "1" ] && [ "$$PERMS_EXISTS" = "1" ]; then
+          # Schema completo. Aún así corremos SIEMPRE los scripts >=04 porque
+          # son todos idempotentes y baratos:
+          #   · 04_bootstrap_admin.sql → NO-OP sin BOOTSTRAP_ADMIN_* (RETURN early)
+          #   · 05_fix_session_sp.sql  → `CREATE OR ALTER PROCEDURE`, idempotente
+          #   · 06_… en adelante       → política: siempre idempotentes
+          # Esto evita tener que `docker compose down -v` cuando agregamos
+          # parches a SPs o queremos re-correr la siembra de admin.
+          echo "[db-init] schema completo — re-aplicando scripts >=04 (idempotentes)."
+          SCRIPT_GLOB='0[4-9]_*.sql [1-9][0-9]_*.sql'
+        elif [ "$$BASE_EXISTS" = "1" ] && [ "$$PERMS_EXISTS" != "1" ]; then
+          echo "[db-init] schema base presente, RBAC FALTANTE — aplicando scripts >=03 (idempotentes)."
+          SCRIPT_GLOB='0[3-9]_*.sql [1-9][0-9]_*.sql'
+        else
+          echo "[db-init] schema vacío — procediendo a aplicar TODOS los scripts."
+        fi
+
+        # Pre-procesamos los .sql para sanear opciones que NO existen en
+        # SQL Server 2022 local pero que sí están en el dump de Azure SQL DB
+        # (que corre un engine más nuevo). Específicamente:
+        #
+        #   · COMPATIBILITY_LEVEL = 170  → 160   (170 es Azure SQL / SQL 2025;
+        #     SQL Server 2022 acepta 100/110/120/130/140/150/160).
+        #
+        # No tocamos los archivos fuente (`/init` está montado read-only,
+        # y los regenera db/sanitize.py); transformamos copias en /tmp.
+        echo "[db-init] saneando scripts para SQL Server 2022 (compat 160)..."
+        mkdir -p /tmp/init
+        for f in $$(ls /init/[0-9][0-9]_*.sql 2>/dev/null | sort); do
+          base=$$(basename "$$f")
+          sed -E 's/(COMPATIBILITY_LEVEL[[:space:]]*=[[:space:]]*)17[0-9]/\1160/Ig' "$$f" > "/tmp/init/$$base"
+        done
+
+        # Construimos la lista de archivos a aplicar usando la variable
+        # SCRIPT_GLOB decidida por el gate compuesto. La expansión con
+        # `eval` permite patrones múltiples (ej. "0[3-9]_*.sql [1-9][0-9]_*.sql")
+        # cuando solo se aplica el delta RBAC sobre una BD vieja.
+        # (El `$$` antes del nombre escapa el `$` para que docker-compose
+        # NO intente interpolarlo como variable del host).
+        echo "[db-init] aplicando scripts en orden (glob='$$SCRIPT_GLOB')..."
+        SCRIPT_LIST=$$(eval ls /tmp/init/$$SCRIPT_GLOB 2>/dev/null | sort -u)
+        if [ -z "$$SCRIPT_LIST" ]; then
+          echo "[db-init] sin scripts que aplicar para el patrón actual."
+          exit 0
+        fi
+
+        # Algunos scripts usan variables de sqlcmd (`$(VAR)`) que se
+        # inyectan via `-v`. `sqlcmd` falla con "scripting variable not
+        # defined" si recibe `$(VAR)` sin valor, así que pasamos SIEMPRE
+        # un sentinel `__NONE__` cuando la env var está vacía. Los scripts
+        # (ej. 04_bootstrap_admin.sql) detectan el sentinel y entran al
+        # path SKIP limpio.
+        SAFE_OID="$${BOOTSTRAP_ADMIN_OID:-__NONE__}"
+        SAFE_EMAIL="$${BOOTSTRAP_ADMIN_EMAIL:-__NONE__}"
+        # Si por alguna razón llegan vacíos a pesar del :-, forzamos:
+        [ -z "$$SAFE_OID" ]   && SAFE_OID="__NONE__"
+        [ -z "$$SAFE_EMAIL" ] && SAFE_EMAIL="__NONE__"
+
+        # Política del loop:
+        #   · Scripts CRÍTICOS (01-03 = schema base + RBAC): un fallo
+        #     marca rc=1 Y hace `break` — sin schema no tiene sentido
+        #     seguir, y el backend NO debe arrancar (`depends_on:
+        #     service_completed_successfully`).
+        #   · Scripts IDEMPOTENTES (>=04): un fallo se loggea como WARN
+        #     y NO afecta rc — son features opcionales (bootstrap admin)
+        #     o parches que pueden re-correr en próximas iteraciones.
+        #     Esto evita que un OID malformado bloquee el arranque del
+        #     backend cuando lo único que necesita es el SP parchado por
+        #     05_fix_session_sp.sql.
+        rc=0
+        for f in $$SCRIPT_LIST; do
+          echo "[db-init] >> $$f"
+          base_name=$$(basename "$$f")
+          is_critical=0
+          case "$$base_name" in
+            0[1-3]_*) is_critical=1 ;;
+          esac
+
+          if ! "$$SQLCMD" -C -I -S database -U SA -P "$${MSSQL_SA_PASSWORD}" -b \
+              -v OID="$$SAFE_OID" \
+              -v EMAIL="$$SAFE_EMAIL" \
+              -i "$$f"; then
+            if [ "$$is_critical" = "1" ]; then
+              echo "[db-init] FALLO CRÍTICO: $$f — abortando."
+              rc=1
+              break
+            else
+              echo "[db-init] WARN: $$f falló (script idempotente, no bloqueante)."
+            fi
+          fi
+        done
+        echo "[db-init] done (rc=$$rc)."
+        exit $$rc
+    restart: "no"
+
+  # =========================================================================
+  #  Backend — Azure Functions (Python)
+  # =========================================================================
+  backend:
+    build:
+      context: ./votometro-backend
+      dockerfile: Dockerfile
+      pull: true
+    image: votometro/backend:local
+    container_name: votometro-backend
+    restart: unless-stopped
+    depends_on:
+      database:
+        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
+
+    # FIX WSL2/Windows: ver explicación en `database.ports`.
+    ports:
+      - "7071:7071"
+
+    environment:
+      AzureWebJobsStorage: "UseDevelopmentStorage=true"
+      FUNCTIONS_WORKER_RUNTIME: python
+      AzureFunctionsJobHost__Logging__Console__IsEnabled: "true"
+      ASPNETCORE_URLS: "http://+:7071"
+      TENANT_ID: ${TENANT_ID}
+      MS_CLIENT_ID: ${MS_CLIENT_ID}
+      MS_CLIENT_SECRET: ${MS_CLIENT_SECRET}
+      POWER_BI_GROUP_ID: ${POWER_BI_GROUP_ID}
+      POWER_BI_CLIENT_ID: ${POWER_BI_CLIENT_ID}
+      POWER_BI_CLIENT_SECRET: ${POWER_BI_CLIENT_SECRET}
+      POWER_BI_TENANT_ID: ${POWER_BI_TENANT_ID}
+      SQL_CONNECTION_STRING: ${SQL_CONNECTION_STRING}
+
+    volumes:
+      - type: bind
+        source: ./secrets/local.settings.json
+        target: /home/site/wwwroot/local.settings.json
+        read_only: true
+
+    networks:
+      - votometro-network
+
+    # --- Hardening ---
+    user: "10001:10001"
+    read_only: true
+    # FIX (crash loop): el Functions host de Azure escribe sus master/host
+    # keys al arrancar en /azure-functions-host/Secrets. Con read_only:true
+    # y solo /tmp + /home/app en tmpfs, el host crasheaba con
+    # UnauthorizedAccessException antes de exponer :7071. Añadimos tmpfs
+    # explícitos para todos los paths que el runtime necesita escribir.
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+      - /home/app:size=8m,mode=0700
+      - /azure-functions-host/Secrets:size=8m,mode=0700,uid=10001,gid=10001
+      - /azure-functions-host/logs:size=16m,mode=0700,uid=10001,gid=10001
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    ulimits:
+      nofile:
+        soft: 1024
+        hard: 2048
+
+    # LÍMITES CORREGIDOS: PIDs dentro del bloque deploy
+    deploy:
+      resources:
+        limits:
+          cpus: "${BACKEND_CPU_LIMIT:-1.0}"
+          memory: "${BACKEND_MEM_LIMIT:-1g}"
+          pids: 256
+        reservations:
+          cpus: "0.25"
+          memory: "256m"
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # =========================================================================
+  #  Frontend — React SPA servido por nginx (non-root)
+  # =========================================================================
+  frontend:
+    build:
+      context: ./votometro-frontend
+      dockerfile: Dockerfile
+      pull: true
+      args:
+        VITE_BACKEND_URL: ${VITE_BACKEND_URL}
+        VITE_AZURE_CLIENT_ID: ${VITE_AZURE_CLIENT_ID}
+        VITE_AZURE_TENANT_ID: ${VITE_AZURE_TENANT_ID}
+        # DEV BYPASS — defaults a "false" si la env var no existe en .env.
+        # Sólo se respeta en builds dev (Vite colapsa la rama en prod).
+        VITE_LOCAL_AUTH_BYPASS: ${VITE_LOCAL_AUTH_BYPASS:-false}
+    image: votometro/frontend:local
+    container_name: votometro-frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_started
+
+    # FIX WSL2/Windows: ver explicación en `database.ports`.
+    ports:
+      - "8080:8080"
+
+    # Rollback 2026-05-09 (estado del frontend ANTES del intento Power BI):
+    # se eliminaron las vars `FUNCTIONS_KEY` y `NGINX_ENVSUBST_FILTER` que
+    # nginx procesaba con envsubst sobre la plantilla. El reverse-proxy
+    # vuelve a ser estático (config copiada directo a conf.d/), eliminando
+    # la categoría completa de bugs de "envsubst se come $host/$uri".
+    #
+    # Consecuencia conocida: `/api/power-bi/{reportId}` volverá a devolver
+    # 401 (porque el Functions host requiere `x-functions-key`). Cuando se
+    # quiera arreglar de nuevo, hacerlo bajando `auth_level=FUNCTION` →
+    # `ANONYMOUS` en `power_bi_functions.py` y dejando que solo el Bearer
+    # JWT haga la autorización — mucho más simple que tocar nginx.
+
+    networks:
+      - votometro-network
+
+    # --- Hardening ---
+    user: "101:101"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+      - /var/cache/nginx:size=32m,mode=0755,uid=101,gid=101
+      - /var/run:size=4m,mode=0755,uid=101,gid=101
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+
+    # Healthcheck explícito sobre el listener de nginx. Si el `tmpfs` sobre
+    # `/etc/nginx/conf.d` borró el config y nginx no tiene server block,
+    # esto falla y el contenedor queda `unhealthy` en `docker compose ps`,
+    # haciendo el problema visible en lugar de aparentar "todo bien".
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:8080/"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+    # LÍMITES CORREGIDOS: PIDs dentro del bloque deploy
+    deploy:
+      resources:
+        limits:
+          cpus: "${FRONTEND_CPU_LIMIT:-0.5}"
+          memory: "${FRONTEND_MEM_LIMIT:-256m}"
+          pids: 128
+        reservations:
+          cpus: "0.1"
+          memory: "64m"
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

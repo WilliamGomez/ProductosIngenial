@@ -1,0 +1,81 @@
+# =============================================================================
+# Votometro · Backend .dockerignore
+# -----------------------------------------------------------------------------
+# Bloquea la exposición accidental de secretos, artefactos de desarrollo
+# y metadatos que NO deben viajar en el build context (OWASP CS10 — prevent
+# secret exposure in container images).
+# =============================================================================
+
+# --- Secretos y configuración local -----------------------------------------
+local.settings.json
+*.local.settings.json
+.env
+.env.*
+!.env.example
+secrets/
+*.pem
+*.key
+*.crt
+*.pfx
+
+# --- Control de versiones ---------------------------------------------------
+.git/
+.gitignore
+.gitattributes
+.gitmodules
+
+# --- Cachés y compilación Python --------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# --- Entornos virtuales -----------------------------------------------------
+.venv/
+venv/
+env/
+ENV/
+
+# --- Azure Functions cache local --------------------------------------------
+bin/
+obj/
+.python_packages/
+.azurefunctions/
+
+# --- Editores / IDE ---------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# --- Logs locales -----------------------------------------------------------
+*.log
+logs/
+
+# --- Docs internas que no deben ir a la imagen ------------------------------
+README.md
+BACKEND_MEM.md
+docs/
+migrations/
+*.md
+
+# --- Tests (si existen) -----------------------------------------------------
+tests/
+test_*.py
+*_test.py
+
+# --- El propio Dockerfile (no es código de la app) --------------------------
+Dockerfile
+.dockerignore

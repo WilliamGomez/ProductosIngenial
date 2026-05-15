@@ -1,0 +1,49 @@
+name: Build and Deploy React App to Azure App Service
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: 18
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: "ingenial"
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@v3
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+
+    - name: Install dependencies
+      run: npm install
+
+    - name: Create .env file dynamically
+      run: |
+        echo "VITE_CLIENT_ID=${{ vars.VITE_CLIENT_ID }}" >> .env
+        echo "VITE_TENANT_ID=${{ vars.VITE_TENANT_ID }}" >> .env
+        echo "VITE_REDIRECT_URI=${{ vars.VITE_REDIRECT_URI }}" >> .env
+        echo "VITE_BASE_ENDPOINT=${{ vars.VITE_BASE_ENDPOINT }}" >> .env
+        echo "VITE_CLIENT_ID_SCOPE=${{ vars.VITE_CLIENT_ID_SCOPE }}" >> .env
+
+    - name: Build the app
+      run: npm run build
+    
+    - name: 'Log in to Azure with AZ CLI'
+      uses: azure/login@v2
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Deploy to Azure Web App
+      uses: azure/webapps-deploy@v2
+      with:
+        app-name: ${{ vars.WEB_APP_NAME }}
+        package: ./dist

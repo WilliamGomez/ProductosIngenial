@@ -1,0 +1,157 @@
+# =============================================================================
+# Votometro · .gitignore (raíz del monorepo)
+# -----------------------------------------------------------------------------
+# Asegura que NUNCA se versionen secretos, credenciales, dumps de DB con datos
+# reales ni cachés locales. Los .gitignore por subdir del backend/frontend
+# complementan esta lista.
+#
+# Archivos SIEMPRE rastreados (no ignorar nunca):
+#   *.md · *.sh · *.ps1 · docker-compose.yml · divipole.csv · .env.example
+# =============================================================================
+
+# =============================================================================
+# SECRETOS Y CREDENCIALES — Máxima prioridad
+# =============================================================================
+.env
+.env.*
+!.env.example
+secrets/
+*.pem
+*.key
+*.crt
+*.pfx
+local.settings.json
+*.secrets
+.secrets
+
+# =============================================================================
+# ENTORNOS PYTHON
+# =============================================================================
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.python_packages/
+.venv_notebook/
+
+# Cachés de intérprete y herramientas
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+**/*.py[cod]
+**/*$py.class
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/.coverage
+**/coverage.xml
+**/.tox/
+**/.nox/
+dist/
+*.egg-info/
+*.egg
+
+# =============================================================================
+# FRONTEND — Node / React / Vite
+# =============================================================================
+**/node_modules/
+**/dist/
+**/build/
+**/.vite/
+**/.next/
+**/.nuxt/
+*.local
+
+# Logs de gestores de paquetes
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# =============================================================================
+# AZURE FUNCTIONS — Artefactos locales
+# =============================================================================
+# local.settings.json ya cubierto arriba
+bin/
+obj/
+__blobstorage__/
+__queuestorage__/
+__azurite_db*__.json
+*.user
+*.suo
+*.cscfg
+*.Cache
+project.lock.json
+/packages
+/TestResults
+
+# =============================================================================
+# BASE DE DATOS LOCAL Y DOCKER
+# =============================================================================
+# Los SQL de init/ SE versionan (esquema + migraciones), NUNCA los dumps.
+db/backups/
+db/data/
+db/init/_raw_azure.sql
+db/init/*.bak
+db/init/*.bacpac
+
+# Volúmenes de datos Docker (si se montan en subdirectorios locales)
+docker/data/
+docker/volumes/
+mssql-data/
+sql-data/
+
+# =============================================================================
+# SISTEMA OPERATIVO / EDITORES
+# =============================================================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+*.swp
+*.swo
+*.bak
+*~
+
+# IDEs y editores
+.vscode/
+!.vscode/extensions.json
+.idea/
+*.iml
+.project
+.classpath
+.settings/
+
+# =============================================================================
+# LOGS
+# =============================================================================
+*.log
+logs/
+*.log.*
+
+# =============================================================================
+# MISCELÁNEOS
+# =============================================================================
+*.ipynb
+*.xlsx
+*.csv.lock
+
+# =============================================================================
+# ARCHIVOS SIEMPRE RASTREADOS — Negaciones explícitas (última sección)
+# Aunque un patrón anterior los ignore, estas negaciones los restauran.
+# =============================================================================
+!*.md
+!*.sh
+!*.ps1
+!bootstrap.sh
+!docker-compose.yml
+!divipole.csv
+!.env.example
+!db/init/*.sql

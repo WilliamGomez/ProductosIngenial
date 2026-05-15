@@ -1,0 +1,75 @@
+# =============================================================================
+# Votometro · Frontend .dockerignore
+# -----------------------------------------------------------------------------
+# El bundle final (producción) solo necesita código fuente + manifests. Todo
+# lo demás se excluye para (a) reducir la superficie de ataque y (b) impedir
+# que secretos de desarrollo entren al build context.
+# =============================================================================
+
+# --- Secretos ---------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.pfx
+secrets/
+
+# --- Control de versiones ---------------------------------------------------
+.git/
+.gitignore
+.gitattributes
+.gitmodules
+
+# --- node_modules / dist (se recompilan en el stage builder) ----------------
+node_modules/
+dist/
+build/
+.next/
+.cache/
+.turbo/
+coverage/
+
+# --- Logs y cachés de herramientas ------------------------------------------
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+.eslintcache
+.stylelintcache
+.vite/
+.parcel-cache/
+
+# --- Editores / IDE ---------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# --- VS Code debug ----------------------------------------------------------
+launch.json
+
+# --- Docs / memory (no pertenecen al bundle) --------------------------------
+README.md
+FRONTEND_MEM.md
+docs/
+*.md
+
+# --- Tests ------------------------------------------------------------------
+tests/
+__tests__/
+*.test.ts
+*.test.tsx
+*.spec.ts
+*.spec.tsx
+
+# --- El propio Dockerfile (no lo necesita el builder; sí `nginx.conf`) -----
+Dockerfile
+.dockerignore
+# NOTA: `nginx.conf` NO se ignora — es copiado al stage runtime.

@@ -1,0 +1,9 @@
+azure-functions
+requests==2.32.3
+PyJWT==2.8.0
+msal==1.32.3
+pandas==2.2.3
+cryptography==43.0.3
+pyodbc==5.2.0
+pytz==2025.2
+python-dateutil==2.9.0.post0
