@@ -310,7 +310,7 @@ Para preguntas o cambios, consultar con el Arquitecto de Software responsable de
 # Estabilización y Baseline Pre-Azure
 
 **Fecha:** 2026-05-15
-**Autores:** Ingenial AI Engineering
+**Autores:** Ingenial IA Engineering
 
 Esta sección documenta los hitos técnicos que llevaron el proyecto a un estado **estable y desplegable** antes del paso a producción en Azure.
 

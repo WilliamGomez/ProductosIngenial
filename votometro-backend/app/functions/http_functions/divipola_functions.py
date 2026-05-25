@@ -20,7 +20,8 @@ from http import HTTPStatus
 import azure.functions as func
 
 from app.sql.divipola_sql_adapter import DivipolaSqlAdapter
-from shared.utils import MIMETYPE
+from app.sql.user_sql_adapter import UserSqlAdapter
+from shared.utils import MIMETYPE, decode_token, json_response
 from use_cases.bulk_upsert_divipola import BulkUpsertDivipolaUseCase
 
 
@@ -31,11 +32,25 @@ divipola_bp = func.Blueprint()
 # Helpers
 # -----------------------------------------------------------------------------
 def _err(message: str, status: int) -> func.HttpResponse:
-    return func.HttpResponse(
-        json.dumps({"error": message}),
-        status_code=status,
-        mimetype=MIMETYPE,
-    )
+    return json_response({"error": message}, status_code=status)
+
+
+def _require_admin(req: func.HttpRequest) -> func.HttpResponse | None:
+    auth_header = req.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return _err("Authorization header is required", HTTPStatus.UNAUTHORIZED)
+
+    try:
+        claims = decode_token(auth_header.split(" ", 1)[1].strip())
+        caller_id = claims.get("oid")
+        if not caller_id:
+            return _err("Invalid token: user ID not found", HTTPStatus.UNAUTHORIZED)
+        caller = UserSqlAdapter().get_user(caller_id)
+        if not caller or caller.get("role") != "Admin":
+            return _err("Admin role required", HTTPStatus.FORBIDDEN)
+    except ValueError as error:
+        return _err(str(error), HTTPStatus.UNAUTHORIZED)
+    return None
 
 
 def _parse_multipart_csv(req: func.HttpRequest) -> bytes:
@@ -98,7 +113,7 @@ def _parse_multipart_csv(req: func.HttpRequest) -> bytes:
 @divipola_bp.route(
     route="divipola/upload",
     methods=["POST"],
-    auth_level=func.AuthLevel.ANONYMOUS,   # TODO: envolver con _require_admin antes de prod
+    auth_level=func.AuthLevel.ANONYMOUS,
 )
 def upload_divipola(req: func.HttpRequest) -> func.HttpResponse:
     """Recibe un CSV y aplica upsert al catálogo `dbo.DIVIPOLA`.
@@ -109,6 +124,10 @@ def upload_divipola(req: func.HttpRequest) -> func.HttpResponse:
     Respuesta:
       `{ "inserted": N, "updated": M, "total": N+M }`
     """
+    deny = _require_admin(req)
+    if deny:
+        return deny
+
     try:
         csv_bytes = _parse_multipart_csv(req)
     except ValueError as ve:
@@ -133,7 +152,7 @@ def upload_divipola(req: func.HttpRequest) -> func.HttpResponse:
         return _err(str(ve), HTTPStatus.BAD_REQUEST)
     except Exception as e:
         logging.exception("[UploadDivipola] 500")
-        return _err(f"Internal error: {e}", HTTPStatus.INTERNAL_SERVER_ERROR)
+        return _err("Internal error", HTTPStatus.INTERNAL_SERVER_ERROR)
 
 
 # -----------------------------------------------------------------------------
@@ -146,6 +165,10 @@ def upload_divipola(req: func.HttpRequest) -> func.HttpResponse:
     auth_level=func.AuthLevel.ANONYMOUS,
 )
 def divipola_status(req: func.HttpRequest) -> func.HttpResponse:
+    deny = _require_admin(req)
+    if deny:
+        return deny
+
     try:
         count = DivipolaSqlAdapter().count()
         return func.HttpResponse(
@@ -155,4 +178,4 @@ def divipola_status(req: func.HttpRequest) -> func.HttpResponse:
         )
     except Exception as e:
         logging.exception("[DivipolaStatus] 500")
-        return _err(f"Internal error: {e}", HTTPStatus.INTERNAL_SERVER_ERROR)
+        return _err("Internal error", HTTPStatus.INTERNAL_SERVER_ERROR)

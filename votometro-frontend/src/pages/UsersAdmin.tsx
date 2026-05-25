@@ -9,12 +9,15 @@ import {
     ChevronRight,
     Eye,
     UserSearch,
+    Trash2,
+    AlertTriangle,
+    KeyRound,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAccessToken } from "../hooks/useAccessToken";
 import type { IUser } from "../interfaces/IUser";
-import { getUsers } from "../services/api";
+import { deleteUser, getUsers, resetUserMfa } from "../services/api";
 import {
     Avatar,
     Badge,
@@ -92,7 +95,11 @@ const UsersAdmin = () => {
 
     const [loading, setLoading] = useState(true);
 
-    const { sessionToken, deviceId } = useSession();
+    const { sessionToken, deviceId, user: currentUser } = useSession();
+    const [userToDelete, setUserToDelete] = useState<IUser | null>(null);
+    const [deleteError, setDeleteError] = useState("");
+    const [isDeleting, setIsDeleting] = useState(false);
+    const [resettingMfaUserId, setResettingMfaUserId] = useState<string | null>(null);
 
     useEffect(() => {
         getUsersList();
@@ -131,6 +138,40 @@ const UsersAdmin = () => {
             setInactiveUsers(0);
         } finally {
             setLoading(false);
+        }
+    };
+
+    const confirmDeleteUser = async () => {
+        if (!userToDelete?.id) return;
+        setIsDeleting(true);
+        setDeleteError("");
+        try {
+            const token = await getToken();
+            await deleteUser(token, userToDelete.id);
+            setUserToDelete(null);
+            await getUsersList();
+        } catch (error) {
+            console.error("Error al eliminar usuario:", error);
+            setDeleteError("No se pudo eliminar el usuario. Revisa si tiene dependencias activas o intenta de nuevo.");
+        } finally {
+            setIsDeleting(false);
+        }
+    };
+
+    const handleResetMfa = async (targetUser: IUser) => {
+        if (!window.confirm(`Restablecer MFA para ${targetUser.display_name || targetUser.email}? El usuario tendra que configurarlo de nuevo al ingresar.`)) {
+            return;
+        }
+        setResettingMfaUserId(targetUser.id);
+        try {
+            const token = await getToken();
+            await resetUserMfa(token, targetUser.id);
+            await getUsersList();
+        } catch (error) {
+            console.error("Error al restablecer MFA:", error);
+            alert("No se pudo restablecer el MFA del usuario.");
+        } finally {
+            setResettingMfaUserId(null);
         }
     };
 
@@ -584,6 +625,7 @@ const UsersAdmin = () => {
                                                 <td className="px-3 py-2">
                                                     <UserActions
                                                         user={user}
+                                                        currentUserId={currentUser?.id}
                                                         onView={() =>
                                                             navigate(
                                                                 `/users/${user.id}`
@@ -594,6 +636,12 @@ const UsersAdmin = () => {
                                                                 `/users/edit/${user.id}`
                                                             )
                                                         }
+                                                        onDelete={() => {
+                                                            setDeleteError("");
+                                                            setUserToDelete(user);
+                                                        }}
+                                                        onResetMfa={() => handleResetMfa(user)}
+                                                        isResettingMfa={resettingMfaUserId === user.id}
                                                     />
                                                 </td>
                                             </tr>
@@ -719,6 +767,7 @@ const UsersAdmin = () => {
                                                     >
                                                         <UserActions
                                                             user={user}
+                                                            currentUserId={currentUser?.id}
                                                             onView={() =>
                                                                 navigate(
                                                                     `/users/${user.id}`
@@ -729,6 +778,12 @@ const UsersAdmin = () => {
                                                                     `/users/edit/${user.id}`
                                                                 )
                                                             }
+                                                            onDelete={() => {
+                                                                setDeleteError("");
+                                                                setUserToDelete(user);
+                                                            }}
+                                                            onResetMfa={() => handleResetMfa(user)}
+                                                            isResettingMfa={resettingMfaUserId === user.id}
                                                         />
                                                     </td>
                                                 )}
@@ -810,6 +865,60 @@ const UsersAdmin = () => {
                     </div>
                 )}
             </Card>
+
+            {userToDelete && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 px-4 backdrop-blur-sm">
+                    <div
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="delete-user-title"
+                        className="w-full max-w-md rounded-xl bg-white p-6 shadow-2xl"
+                    >
+                        <div className="flex items-start gap-3">
+                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-rose-50 text-rose-600">
+                                <AlertTriangle className="h-5 w-5" />
+                            </div>
+                            <div className="min-w-0">
+                                <h3 id="delete-user-title" className="text-base font-semibold text-slate-900">
+                                    Eliminar usuario
+                                </h3>
+                                <p className="mt-1 text-sm text-slate-600">
+                                    Esta acción eliminará a{" "}
+                                    <span className="font-semibold text-slate-900">
+                                        {userToDelete.display_name || userToDelete.email}
+                                    </span>{" "}
+                                    y limpiará sus productos, zonas y sesiones asociadas.
+                                </p>
+                            </div>
+                        </div>
+                        {deleteError && (
+                            <div className="mt-4 rounded-lg border border-rose-100 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                                {deleteError}
+                            </div>
+                        )}
+                        <div className="mt-6 flex justify-end gap-2">
+                            <Button
+                                variant="secondary"
+                                disabled={isDeleting}
+                                onClick={() => {
+                                    setUserToDelete(null);
+                                    setDeleteError("");
+                                }}
+                            >
+                                Cancelar
+                            </Button>
+                            <Button
+                                variant="danger"
+                                leftIcon={<Trash2 />}
+                                disabled={isDeleting}
+                                onClick={confirmDeleteUser}
+                            >
+                                {isDeleting ? "Eliminando..." : "Eliminar"}
+                            </Button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };
@@ -868,26 +977,57 @@ const StatusBadge = ({ enable }: { enable: boolean }) => (
 
 /** Botones de acción para una fila de tabla. Eye → detail, Edit → modal. */
 const UserActions = ({
+    user,
+    currentUserId,
     onView,
     onEdit,
+    onDelete,
+    onResetMfa,
+    isResettingMfa,
 }: {
     user: IUser;
+    currentUserId?: string;
     onView: () => void;
     onEdit: () => void;
-}) => (
-    <div className="flex items-center justify-end gap-1">
-        <IconButton
-            aria-label="Ver detalle del usuario"
-            size="sm"
-            onClick={onView}
-        >
-            <Eye />
-        </IconButton>
-        <IconButton aria-label="Editar usuario" size="sm" onClick={onEdit}>
-            <Edit2 />
-        </IconButton>
-    </div>
-);
+    onDelete: () => void;
+    onResetMfa: () => void;
+    isResettingMfa: boolean;
+}) => {
+    const isSelf = Boolean(currentUserId && user.id === currentUserId);
+    return (
+        <div className="flex items-center justify-end gap-1">
+            <IconButton
+                aria-label="Ver detalle del usuario"
+                size="sm"
+                onClick={onView}
+            >
+                <Eye />
+            </IconButton>
+            <IconButton aria-label="Editar usuario" size="sm" onClick={onEdit}>
+                <Edit2 />
+            </IconButton>
+            <IconButton
+                aria-label="Restablecer MFA"
+                title="Restablecer MFA"
+                size="sm"
+                disabled={isResettingMfa}
+                onClick={onResetMfa}
+            >
+                <KeyRound />
+            </IconButton>
+            <IconButton
+                aria-label={isSelf ? "No puedes eliminar tu propio usuario" : "Eliminar usuario"}
+                title={isSelf ? "No puedes eliminar tu propio usuario activo" : "Eliminar usuario"}
+                size="sm"
+                variant="danger"
+                disabled={isSelf}
+                onClick={onDelete}
+            >
+                <Trash2 />
+            </IconButton>
+        </div>
+    );
+};
 
 /** Grupo de chips de filtro — label encima, chips clickables. */
 const FilterGroup = ({

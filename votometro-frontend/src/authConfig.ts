@@ -23,8 +23,8 @@
 
 import { LogLevel } from "@azure/msal-browser";
 
-const clientId   = import.meta.env.VITE_AZURE_CLIENT_ID;
-const tenantId   = import.meta.env.VITE_AZURE_TENANT_ID;
+const clientId = (import.meta.env.VITE_AZURE_CLIENT_ID ?? "").trim();
+const tenantId = (import.meta.env.VITE_AZURE_TENANT_ID ?? "").trim();
 
 // -----------------------------------------------------------------------------
 // FIX AADSTS500011 — el bug:
@@ -53,19 +53,35 @@ const apiScope =
   import.meta.env.VITE_AZURE_API_SCOPE ||
   `api://${BACKEND_API_CLIENT_ID}/user_impersonation`;
 
-const apiEndpoint = import.meta.env.VITE_BACKEND_URL;
+const apiEndpoint = (import.meta.env.VITE_BACKEND_URL ?? "").trim();
 
-// Validación temprana — falla ruidosamente al cargar la app si falta
-// configuración esencial. Mejor un console.error visible que un spinner
-// infinito sin pista.
-if (!clientId || !tenantId || !apiEndpoint) {
+const requiredEnv = {
+  VITE_AZURE_CLIENT_ID: clientId,
+  VITE_AZURE_TENANT_ID: tenantId,
+  VITE_BACKEND_URL: apiEndpoint,
+};
+
+const missingEnv = Object.entries(requiredEnv)
+  .filter(([, value]) => !value || value.trim().length === 0)
+  .map(([key]) => key);
+
+export const authConfigError =
+  missingEnv.length > 0
+    ? `Faltan variables críticas de autenticación: ${missingEnv.join(", ")}`
+    : null;
+
+// eslint-disable-next-line no-console
+console.info("[authConfig] MSAL env check", {
+  hasClientId: clientId.trim().length > 0,
+  hasTenantId: tenantId.trim().length > 0,
+  hasApiScope: apiScope.trim().length > 0,
+  hasEndpoint: apiEndpoint.trim().length > 0,
+  redirectUri: import.meta.env.VITE_REDIRECT_URI || "window.location.origin",
+});
+
+if (authConfigError) {
   // eslint-disable-next-line no-console
-  console.error("[authConfig] Faltan VITE_AZURE_* / VITE_BACKEND_URL", {
-    hasClientId:  !!clientId,
-    hasTenantId:  !!tenantId,
-    hasApiScope:  !!apiScope,
-    hasEndpoint:  !!apiEndpoint,
-  });
+  console.error("[authConfig] Startup blocked:", authConfigError);
 }
 
 // redirectUri: tiene que coincidir EXACTAMENTE con uno de los registrados
@@ -102,6 +118,7 @@ export const msalConfig = {
 
 export const loginRequest = {
   scopes: apiScope ? [apiScope] : [],
+  prompt: "login" as const,
 };
 
 export const graphConfig = {

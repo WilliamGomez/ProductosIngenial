@@ -26,6 +26,7 @@ import type { IMunicipio } from "../interfaces/IMunicipio";
 import type { ICountry } from "../interfaces/ICountry";
 import type { ISessionInfo } from "../interfaces/ISessionInfo";
 import type { ISessionActivityDetail } from "../interfaces/ISessionInfo";
+import type { ISessionAnalytics } from "../interfaces/ISessionInfo";
 
 // =============================================================================
 // FIX HTTP 405 (Causa Raíz idéntica a la #1 de authConfig.ts):
@@ -44,8 +45,21 @@ import type { ISessionActivityDetail } from "../interfaces/ISessionInfo";
 //   > console.log(import.meta.env.VITE_BACKEND_URL)
 //   "http://localhost:7071/api"
 // =============================================================================
+const apiBaseURL = (import.meta.env.VITE_BACKEND_URL ?? "").trim();
+
+if (!apiBaseURL) {
+  throw new Error("[api] Missing VITE_BACKEND_URL. Expected same-origin '/api'.");
+}
+
+if (!import.meta.env.DEV && /^https?:\/\//i.test(apiBaseURL)) {
+  throw new Error("[api] Invalid VITE_BACKEND_URL for production. Expected same-origin '/api', not an absolute URL.");
+}
+
+// eslint-disable-next-line no-console
+console.info("[api] Axios baseURL", apiBaseURL);
+
 const api = axios.create({
-  baseURL: import.meta.env.VITE_BACKEND_URL,
+  baseURL: apiBaseURL,
   timeout: 60000,
 });
 
@@ -90,11 +104,85 @@ export const forceLogoutAll = async (token: string): Promise<void> => {
   return api
     .post<void>(
       "/session/force-logout-all",
-      { access_token: token },
+      {},
       { headers: { Authorization: `Bearer ${token}` } }
     )
     .then(response => response.data)
     .catch(error => Promise.reject(error));
+};
+
+export interface IMfaStatus {
+  user_id: string;
+  email: string;
+  display_name: string;
+  mfa_enabled: boolean;
+  mfa_enrolled_at?: string | null;
+  has_secret: boolean;
+  session_status?: "MFA_Pending" | "Active" | "Closed" | "Expired_Idle" | "Revoked_by_Admin" | null;
+  mfa_verified: boolean;
+  mfa_required: boolean;
+}
+
+export interface IMfaSetupStart {
+  secret: string;
+  otpauth_uri: string;
+  issuer: string;
+  account: string;
+}
+
+export const getMfaStatus = async (
+  token: string,
+  sessionToken?: string | null
+): Promise<IMfaStatus> => {
+  return api
+    .get<IMfaStatus>("/mfa/status", {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...(sessionToken ? { "X-Session-Token": sessionToken } : {}),
+      },
+      params: sessionToken ? { session_token: sessionToken } : {},
+    })
+    .then((response) => response.data);
+};
+
+export const startMfaSetup = async (token: string): Promise<IMfaSetupStart> => {
+  return api
+    .post<IMfaSetupStart>("/mfa/setup/start", {}, { headers: { Authorization: `Bearer ${token}` } })
+    .then((response) => response.data);
+};
+
+export const verifyMfaSetup = async (
+  token: string,
+  sessionToken: string,
+  code: string
+): Promise<IMfaStatus> => {
+  return api
+    .post<IMfaStatus>(
+      "/mfa/setup/verify",
+      { session_token: sessionToken, code },
+      { headers: { Authorization: `Bearer ${token}`, "X-Session-Token": sessionToken } }
+    )
+    .then((response) => response.data);
+};
+
+export const verifyMfaChallenge = async (
+  token: string,
+  sessionToken: string,
+  code: string
+): Promise<IMfaStatus> => {
+  return api
+    .post<IMfaStatus>(
+      "/mfa/challenge/verify",
+      { session_token: sessionToken, code },
+      { headers: { Authorization: `Bearer ${token}`, "X-Session-Token": sessionToken } }
+    )
+    .then((response) => response.data);
+};
+
+export const resetUserMfa = async (token: string, userId: string): Promise<void> => {
+  return api
+    .post<void>(`/admin/users/${userId}/mfa/reset`, {}, { headers: { Authorization: `Bearer ${token}` } })
+    .then((response) => response.data);
 };
 
 // NOTA: El helper plural `getPowerBiReports` (GET /power-bi) fue retirado el
@@ -224,6 +312,13 @@ export const createUser = async (token: string, data: object): Promise<ISessionR
     });
 };
 
+export const deleteUser = async (token: string, userId: string): Promise<void> => {
+  return api
+    .delete<void>(`/user/${userId}`, { headers: { Authorization: `Bearer ${token}` } })
+    .then((response) => response.data)
+    .catch((error) => Promise.reject(error));
+};
+
 export const getUsersSessionsInfo = async (token: string, deviceId?: string): Promise<ISessionInfo[]> => {
   const params = deviceId ? { device_id: deviceId } : {};
   return api
@@ -243,6 +338,19 @@ export const getSessionActivityDetail = async (
   return api
     .get<ISessionActivityDetail>(`/manage/sessions/${sessionId}/detail`, {
       headers: { Authorization: `Bearer ${token}` },
+    })
+    .then((response) => response.data)
+    .catch((error) => Promise.reject(error));
+};
+
+export const getSessionAnalytics = async (
+  token: string,
+  days = 30
+): Promise<ISessionAnalytics> => {
+  return api
+    .get<ISessionAnalytics>("/manage/sessions/analytics", {
+      headers: { Authorization: `Bearer ${token}` },
+      params: { days },
     })
     .then((response) => response.data)
     .catch((error) => Promise.reject(error));

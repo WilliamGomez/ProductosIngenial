@@ -22,7 +22,6 @@ import {
 import { useAccessToken } from "../hooks/useAccessToken";
 import { getDepartments, getMunicipalities, getUser } from "../services/api";
 import type { IUser } from "../interfaces/IUser";
-import type { IProduct } from "../interfaces/IProduct";
 import type { IDepartment } from "../interfaces/IDepartments";
 import type { IMunicipio } from "../interfaces/IMunicipio";
 import GeographicAssignmentCard from "../components/GeographicAssignmentCard";
@@ -38,6 +37,7 @@ import {
 } from "../components/ui";
 import { Spinner } from "../components/ui/Spinner";
 import { cn } from "../lib/cn";
+import { productStatus } from "../utils/productStatus";
 
 /**
  * UserDetail — perfil completo de un usuario (`/users/:id`).
@@ -85,20 +85,6 @@ const formatDateShort = (input?: string): string => {
         month: "short",
         year: "numeric",
     });
-};
-
-/** Deriva un estado del producto basado en `enable` + `expiration`. */
-const productStatus = (
-    p: IProduct
-): { label: string; variant: "success" | "danger" | "warning" } => {
-    if (!p.enable) return { label: "Deshabilitado", variant: "danger" };
-    if (p.expiration) {
-        const exp = new Date(p.expiration.replace(" ", "T")).getTime();
-        const now = Date.now();
-        if (!isNaN(exp) && exp < now)
-            return { label: "Vencido", variant: "warning" };
-    }
-    return { label: "Activo", variant: "success" };
 };
 
 const UserDetail = () => {

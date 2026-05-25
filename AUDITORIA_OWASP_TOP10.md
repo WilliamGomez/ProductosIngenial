@@ -508,33 +508,54 @@ Extraer `_assert_active_session` a `shared/utils.py` como función reutilizable 
 
 ---
 
-#### HAL-18 🟡 MEDIO — Contraseña inicial del usuario transmitida en texto claro en el body JSON
+#### ~~HAL-18~~ ✅ CERRADO — Contraseña inicial del usuario transmitida en texto claro en el body JSON
 
-**Archivos afectados:**
-- `votometro-backend/use_cases/create_user.py` — línea 40
+> **Estado: ✅ CERRADO — 2026-05-15**
+> Remediación completa aplicada. Ver detalles abajo.
+
+**Archivos afectados (originalmente):**
+- `votometro-backend/use_cases/create_user.py` — línea 40 (eliminada)
 - `votometro-backend/app/ms_graph/user_graph_adapter.py` — líneas 22-30
 
-**Descripción técnica:**
+**Descripción técnica (original):**
 
 ```python
-# create_user.py línea 40
-password = user_data.get("password")
+# ANTES — create_user.py línea 40 (ELIMINADO)
+password = user_data.get("password")          # ← leía del payload externo
 
-# user_graph_adapter.py líneas 28-30
+# user_graph_adapter.py líneas 28-30 (sin cambios — sigue siendo correcto)
 "passwordProfile": {
     "forceChangePasswordNextSignIn": True,
-    "password": user.password,
+    "password": user.password,                # ← ahora siempre viene del servidor
 },
 ```
 
-La contraseña inicial del usuario se recibe en el body JSON del request `POST /api/user` como campo `"password"` en texto plano. Aunque la comunicación es HTTPS, la contraseña puede aparecer en:
-- Logs de Azure Functions (si el body es logueado en modo debug)
-- Herramientas de desarrollo del navegador del administrador
-- Trazas de Application Insights si están mal configuradas
+La contraseña inicial del usuario se recibía en el body JSON del request `POST /api/user` como campo `"password"` en texto plano, lo que la exponía en logs de depuración, DevTools del navegador del administrador, y trazas de Application Insights.
 
-**Remediación:**
+**Remediación aplicada (2026-05-15):**
 
-Generar la contraseña inicial aleatoria en el servidor (backend), no recibirla del frontend. El flujo debería ser: el admin crea el usuario sin campo `password`, el backend genera una contraseña temporal segura (`secrets.token_urlsafe(16)`), la envía a la Graph API, y notifica al usuario vía email que debe cambiarla en el primer login (el flag `forceChangePasswordNextSignIn: True` ya está presente).
+```python
+# DESPUÉS — create_user.py (nueva función _generate_temp_password)
+def _generate_temp_password(length: int = 14) -> str:
+    """Garantiza: 1 mayúscula + 1 minúscula + 1 dígito + 1 símbolo.
+    Usa secrets.SystemRandom — criptográficamente seguro."""
+    rng = secrets.SystemRandom()
+    mandatory = [rng.choice(_UPPER), rng.choice(_LOWER),
+                 rng.choice(_DIGITS), rng.choice(_SYMBOLS)]
+    filler = [rng.choice(alphabet) for _ in range(length - 4)]
+    chars = mandatory + filler
+    rng.shuffle(chars)
+    return "".join(chars)
+
+# En execute():
+temp_password = _generate_temp_password(length=14)  # ← generada en servidor
+# user_data.get("password") ya no se llama
+# result.pop("password", None)                       # ← no se devuelve en response
+```
+
+**Notificación al usuario:** Se crearon `shared/email_service.py` y `shared/templates/welcome_email.html`. Tras crear el usuario en Graph + SQL, se envía automáticamente un correo con las credenciales al `personal_email`. El flag `forceChangePasswordNextSignIn: True` ya estaba presente en el adaptador de Graph.
+
+**Variables de entorno requeridas:** `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM_NAME`, `FRONTEND_URL` (ver `.env.example`).
 
 ---
 
@@ -618,7 +639,7 @@ La arquitectura RLS de Power BI está correctamente diseñada: el backend genera
 | HAL-12 | Telemetría de sesión manipulable | A04 | 🟡 Medio | Alta | Bajo |
 | HAL-15 | CSP unsafe-inline en styles | A05 | 🟡 Medio | Media | Medio |
 | HAL-16 | JWT verify_aud/iss desactivados | A07 | 🟡 Medio | Baja | Medio |
-| HAL-18 | Contraseña en texto plano en request | A07 | 🟡 Medio | Baja | Medio |
+| HAL-18 | ~~Contraseña en texto plano en request~~ | A07 | ✅ Cerrado (2026-05-15) | — | — |
 | HAL-09 | SQL dinámico con placeholders | A03 | 🟢 Bajo | Muy baja | Bajo |
 | HAL-19 | Tokens MSAL en sessionStorage | A07 | 🟢 Bajo | Baja | Medio |
 
@@ -639,7 +660,7 @@ La arquitectura RLS de Power BI está correctamente diseñada: el backend genera
 
 ### Prioridad 3 — Mediano Plazo (próximo trimestre)
 8. **HAL-17**: Implementar validación de sesión activa en todos los endpoints sensibles.
-9. **HAL-18**: Mover generación de contraseña inicial al servidor.
+9. ~~**HAL-18**: Mover generación de contraseña inicial al servidor.~~ ✅ **CERRADO (2026-05-15)**
 10. **HAL-06**: Implementar TTL y mecanismo de refresh en caché JWKS.
 11. **HAL-08**: Migrar secretos a Azure Key Vault con Managed Identity.
 12. **HAL-16**: Activar `verify_aud` y `verify_iss` en PyJWT.

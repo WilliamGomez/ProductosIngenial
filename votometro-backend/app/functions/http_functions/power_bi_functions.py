@@ -89,7 +89,7 @@ def get_power_bi_report_by_id(req: func.HttpRequest) -> func.HttpResponse:
     except RuntimeError as err:
         logging.exception("PBI error (report=%s): %s", report_id, err)
         return _json_response(
-            {"error": "Power BI token generation failed", "detail": str(err)},
+            {"error": "Power BI token generation failed"},
             HTTPStatus.INTERNAL_SERVER_ERROR,
         )
 

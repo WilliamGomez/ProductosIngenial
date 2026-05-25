@@ -10,6 +10,13 @@ import { sendSessionHeartbeat, type ISessionHeartbeatPage } from "../services/ap
 
 const HEARTBEAT_INTERVAL_MS = 120_000;
 const IDLE_TIMEOUT_MS = 2 * 60 * 60 * 1000;
+const TELEMETRY_CONTEXT_EVENT = "votometro:telemetry-context";
+
+interface TelemetryContextDetail {
+  route?: string;
+  product?: string;
+  reportPage?: string;
+}
 
 const clearBrowserSessionState = () => {
   localStorage.clear();
@@ -23,6 +30,29 @@ const clearBrowserSessionState = () => {
 
 const notifySessionRevoked = () => {
   window.dispatchEvent(new CustomEvent("votometro:session-revoked"));
+};
+
+const segmentForTelemetry = (value?: string | null): string => {
+  return String(value || "")
+    .trim()
+    .replace(/[\\/]+/g, "-")
+    .replace(/\s+/g, "-")
+    .slice(0, 96);
+};
+
+const routeFromTelemetryContext = (
+  detail: TelemetryContextDetail,
+  fallbackRoute: string
+): string => {
+  if (detail.route?.trim()) {
+    return detail.route.trim();
+  }
+
+  const product = segmentForTelemetry(detail.product);
+  const reportPage = segmentForTelemetry(detail.reportPage);
+  const baseRoute = product ? `/${product.toLowerCase()}` : fallbackRoute;
+
+  return reportPage ? `${baseRoute}/${reportPage}` : baseRoute;
 };
 
 export const useSessionTelemetry = () => {
@@ -129,6 +159,25 @@ export const useSessionTelemetry = () => {
     addElapsedForActiveRoute();
     activeRouteRef.current = location.pathname;
     activeStartedAtRef.current = document.visibilityState === "visible" ? Date.now() : null;
+  }, [addElapsedForActiveRoute, enabled, location.pathname]);
+
+  useEffect(() => {
+    if (!enabled) return;
+
+    const handleTelemetryContext = (event: Event) => {
+      const customEvent = event as CustomEvent<TelemetryContextDetail>;
+      addElapsedForActiveRoute();
+      activeRouteRef.current = routeFromTelemetryContext(
+        customEvent.detail || {},
+        location.pathname
+      );
+      activeStartedAtRef.current = document.visibilityState === "visible" ? Date.now() : null;
+    };
+
+    window.addEventListener(TELEMETRY_CONTEXT_EVENT, handleTelemetryContext);
+    return () => {
+      window.removeEventListener(TELEMETRY_CONTEXT_EVENT, handleTelemetryContext);
+    };
   }, [addElapsedForActiveRoute, enabled, location.pathname]);
 
   useEffect(() => {

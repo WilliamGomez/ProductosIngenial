@@ -1,5 +1,5 @@
 from dateutil.relativedelta import relativedelta
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 import mimetypes
 import json as _json
 import jwt
@@ -55,6 +55,8 @@ def json_response(data: Any, status_code: int = 200) -> func.HttpResponse:
 
 # Cache para las claves públicas de Azure AD
 _jwks_cache = None
+_jwks_cache_fetched_at = None
+_JWKS_CACHE_TTL_SECONDS = 24 * 60 * 60
 
 
 def calculate_expiration(product, created_at):
@@ -67,6 +69,8 @@ def calculate_expiration(product, created_at):
         expiration = created_at + timedelta(days=contract_duration)
     elif duration_unit == "years":
         expiration = created_at + relativedelta(years=contract_duration)
+    elif duration_unit == "hours":
+        expiration = created_at + timedelta(hours=contract_duration)
     else:
         raise ValueError(f"Unsupported duration unit: {duration_unit}")
 
@@ -75,9 +79,14 @@ def calculate_expiration(product, created_at):
 
 def get_azure_ad_public_keys() -> Dict:
     """Obtiene las claves públicas de Azure AD para verificar JWTs"""
-    global _jwks_cache
+    global _jwks_cache, _jwks_cache_fetched_at
 
-    if _jwks_cache is not None:
+    cache_age = (
+        (datetime.now(timezone.utc) - _jwks_cache_fetched_at).total_seconds()
+        if _jwks_cache_fetched_at is not None
+        else None
+    )
+    if _jwks_cache is not None and cache_age is not None and cache_age < _JWKS_CACHE_TTL_SECONDS:
         return _jwks_cache
 
     tenant_id = os.getenv("TENANT_ID")
@@ -87,6 +96,7 @@ def get_azure_ad_public_keys() -> Dict:
         response = requests.get(jwks_url, timeout=10)
         response.raise_for_status()
         _jwks_cache = response.json()
+        _jwks_cache_fetched_at = datetime.now(timezone.utc)
         return _jwks_cache
     except Exception as e:
         logging.error(f"Error fetching Azure AD public keys: {e}")
@@ -191,14 +201,14 @@ def verify_and_decode_token(access_token: str) -> Dict:
 
         # Validar audiencia manualmente (puede ser client_id o api://client_id)
         # NOTA: También aceptamos MS Graph temporalmente para tokens de frontend
+        configured_audience = os.getenv("AZURE_API_AUDIENCE", "").strip()
         valid_audiences = [
             client_id,
             f"api://{client_id}",
-            f"https://{client_id}",
-            "00000003-0000-0000-c000-000000000000",  # MS Graph API (temporal)
-            "51ddd54e-2de6-4faf-8181-9dbddbbe72fa",  # Frontend app ID
-            f"api://d29a0628-b1a4-44de-a872-a801324d7506",
         ]
+        if configured_audience:
+            valid_audiences.append(configured_audience)
+        valid_audiences = [audience for audience in valid_audiences if audience]
 
         # Verificar y decodificar el token
         payload = jwt.decode(

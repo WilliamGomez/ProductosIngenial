@@ -36,6 +36,7 @@ import {
 } from "../components/ui";
 import { Spinner } from "../components/ui/Spinner";
 import { cn } from "../lib/cn";
+import { isProductActive, isProductExpired } from "../utils/productStatus";
 
 const initialFormData: IUserInfoFormData = {
     display_name: "",
@@ -179,22 +180,27 @@ const UserEdit = () => {
             enable: u.enable || false,
         });
 
-        const enabledProducts = (u.products ?? []).filter((p) => p.enable !== false);
-        const votometro = enabledProducts.find((p) => p.name === "Votometro");
-        const audivoto = enabledProducts.find((p) => p.name === "Audivoto");
+        const products = (u.products ?? []).map((product) => ({
+            ...product,
+            enable: isProductActive(product),
+        }));
+        const votometro = products.find((p) => p.name === "Votometro");
+        const audivoto = products.find((p) => p.name === "Audivoto");
+        const activeVotometro = votometro && isProductActive(votometro) ? votometro : undefined;
+        const activeAudivoto = audivoto && isProductActive(audivoto) ? audivoto : undefined;
 
-        setVotometroEnabled(!!votometro);
-        setAudivotoEnabled(!!audivoto);
+        setVotometroEnabled(!!activeVotometro);
+        setAudivotoEnabled(!!activeAudivoto);
 
         setProductsFormData({
-            tiempoContratacionVotometro: votometro && votometro.contract_duration != null
-                ? String(votometro.contract_duration) + " " + (votometro.duration_unit === "months" ? "meses" : votometro.duration_unit === "years" ? "años" : "días")
+            tiempoContratacionVotometro: activeVotometro && activeVotometro.contract_duration != null
+                ? String(activeVotometro.contract_duration) + " " + (activeVotometro.duration_unit === "months" ? "meses" : activeVotometro.duration_unit === "years" ? "años" : "días")
                 : "",
-            tiempoContratacionAudivoto: audivoto && audivoto.contract_duration != null
-                ? String(audivoto.contract_duration) + " " + (audivoto.duration_unit === "months" ? "meses" : audivoto.duration_unit === "years" ? "años" : "días")
+            tiempoContratacionAudivoto: activeAudivoto && activeAudivoto.contract_duration != null
+                ? String(activeAudivoto.contract_duration) + " " + (activeAudivoto.duration_unit === "months" ? "meses" : activeAudivoto.duration_unit === "years" ? "años" : "días")
                 : "",
-            initialProducts: enabledProducts,
-            newProducts: enabledProducts,
+            initialProducts: products,
+            newProducts: products,
         });
 
         // Parseador maestro para hidratar Zonas desde el formato anterior si es necesario
@@ -224,7 +230,7 @@ const UserEdit = () => {
         };
 
         const catalogsReady = departamentos.length > 0 && municipios.length > 0;
-        const hydrateProductZones = (product?: typeof enabledProducts[number]) => {
+        const hydrateProductZones = (product?: typeof products[number]) => {
             if (!product) return [];
             if (Array.isArray(product.zones) && product.zones.length > 0) {
                 return fromBackendZones(product.zones);
@@ -232,8 +238,8 @@ const UserEdit = () => {
             return catalogsReady ? parseZones(product.state, product.city) : [];
         };
 
-        setVotometroZones(hydrateProductZones(votometro));
-        setAudivotoZones(hydrateProductZones(audivoto));
+        setVotometroZones(hydrateProductZones(activeVotometro));
+        setAudivotoZones(hydrateProductZones(activeAudivoto));
     };
 
     useEffect(() => {
@@ -399,13 +405,15 @@ const UserEdit = () => {
         setLoading(true);
 
         const updatedProducts: any[] = [];
+        const existingProducts = selectedUser.products ?? [];
 
         if (votometroEnabled && votometroZones.length > 0) {
             const unit = productsFormData.tiempoContratacionVotometro.split(" ")[1];
+            const existingVotometro = existingProducts.find((p) => p.name === "Votometro" && !isProductExpired(p));
             
             updatedProducts.push({
                 name: "Votometro",
-                id: productsFormData.newProducts.find((p) => p.name === "Votometro")?.id || null,
+                id: existingVotometro?.id || null,
                 contract_duration: parseInt(productsFormData.tiempoContratacionVotometro.split(" ")[0]),
                 duration_unit: unit?.includes("mes") ? "months" : unit?.includes("año") ? "years" : "days",
                 amount_cop: 150000.0,
@@ -416,10 +424,11 @@ const UserEdit = () => {
 
         if (audivotoEnabled && audivotoZones.length > 0) {
             const unit = productsFormData.tiempoContratacionAudivoto.split(" ")[1];
+            const existingAudivoto = existingProducts.find((p) => p.name === "Audivoto" && !isProductExpired(p));
             
             updatedProducts.push({
                 name: "Audivoto",
-                id: productsFormData.newProducts.find((p) => p.name === "Audivoto")?.id || null,
+                id: existingAudivoto?.id || null,
                 contract_duration: parseInt(productsFormData.tiempoContratacionAudivoto.split(" ")[0]),
                 duration_unit: unit?.includes("mes") ? "months" : unit?.includes("año") ? "years" : "days",
                 amount_cop: 150000.0,

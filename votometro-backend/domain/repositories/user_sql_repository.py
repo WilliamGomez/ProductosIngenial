@@ -22,6 +22,10 @@ class IUserSqlRepository(ABC):
         pass
 
     @abstractmethod
+    def delete_user(self, user_id: str) -> None:
+        pass
+
+    @abstractmethod
     def upsert_user_products(self, user_id: str, products: List[Product]):
         pass
 

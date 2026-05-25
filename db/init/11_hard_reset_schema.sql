@@ -184,6 +184,13 @@ AS
 BEGIN
     SET NOCOUNT ON;
 
+    UPDATE dbo.User_Products
+    SET enable = 0,
+        updated_at = SYSUTCDATETIME()
+    WHERE enable = 1
+      AND expiration IS NOT NULL
+      AND expiration <= SYSUTCDATETIME();
+
     SELECT
         up.id               AS product_id,
         p.name              AS product_name,
@@ -204,6 +211,7 @@ BEGIN
     INNER JOIN dbo.Products       p ON p.id = up.product_id
     WHERE up.user_id = @user_id
       AND up.enable  = 1
+      AND (up.expiration IS NULL OR up.expiration > SYSUTCDATETIME())
     ORDER BY up.id DESC;
 END;
 GO
@@ -276,7 +284,10 @@ BEGIN
             i.duration_unit,
             i.expiration,
             i.amount_cop,
-            i.enable
+            CASE
+                WHEN i.expiration IS NOT NULL AND i.expiration <= SYSUTCDATETIME() THEN 0
+                ELSE i.enable
+            END AS enable
         FROM @incoming i
         INNER JOIN dbo.Products p ON p.name = i.name
     ) AS S

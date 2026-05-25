@@ -221,7 +221,7 @@ const ProductsSelector = ({
               <h3 className="font-semibold text-slate-800 text-sm tracking-wide">RESUMEN DE ASIGNACIÓN</h3>
             </div>
             
-            <div className="p-5 space-y-6">
+            <div className="max-h-[32rem] space-y-6 overflow-y-auto p-5 pr-3">
               
               {/* Recibo Votometro */}
               <div className={`${!votometroEnabled ? 'opacity-50 grayscale' : ''}`}>

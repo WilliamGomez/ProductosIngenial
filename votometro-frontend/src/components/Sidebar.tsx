@@ -1,6 +1,7 @@
 import {
     Users,
     Network,
+    BarChart3,
     Binoculars,
     Archive,
     ChevronsLeft,
@@ -13,6 +14,7 @@ import { NavLink } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
 import { useSidebar } from "../layouts/SidebarContext";
 import { cn } from "../lib/cn";
+import { isProductActive } from "../utils/productStatus";
 
 /**
  * Sidebar — navegación lateral colapsable (Tabler/Vuexy-style).
@@ -82,6 +84,12 @@ const NAV_ITEMS: NavItem[] = [
         icon: Network,
         visible: ({ userRole }) => userRole === "Admin",
     },
+    {
+        to: "/sessions-analytics",
+        label: "Analitica",
+        icon: BarChart3,
+        visible: ({ userRole }) => userRole === "Admin",
+    },
 ];
 
 export default function Sidebar() {
@@ -90,7 +98,7 @@ export default function Sidebar() {
 
     const hasProduct = (name: string) =>
         userProducts?.some(
-            (p) => p.name.toLowerCase() === name.toLowerCase() && p.enable
+            (p) => p.name.toLowerCase() === name.toLowerCase() && isProductActive(p)
         );
 
     const items = NAV_ITEMS.filter((item) =>

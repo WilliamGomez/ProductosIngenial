@@ -1,5 +1,5 @@
 ﻿import { Clock, Globe, PieChart, Route } from "lucide-react";
-import type { ISessionActivityDetail } from "../interfaces/ISessionInfo";
+import type { ISessionActivityDetail, ISessionActivityPage } from "../interfaces/ISessionInfo";
 import { Badge, Card, CardBody, CardHeader, CardTitle } from "./ui";
 import { cn } from "../lib/cn";
 
@@ -54,10 +54,42 @@ interface ProductTotal {
   tone: string;
 }
 
+const aggregatePagesByRoute = (pages: ISessionActivityPage[]): ISessionActivityPage[] => {
+  const grouped = new Map<string, ISessionActivityPage>();
+
+  pages.forEach((page) => {
+    const route = page.page_route?.trim();
+    if (!route) return;
+
+    const seconds = Number(page.time_spent_seconds || 0);
+    const existing = grouped.get(route);
+    if (!existing) {
+      grouped.set(route, { ...page, page_route: route, time_spent_seconds: seconds });
+      return;
+    }
+
+    grouped.set(route, {
+      ...existing,
+      log_id: Math.min(Number(existing.log_id ?? page.log_id), Number(page.log_id ?? existing.log_id)),
+      created_at:
+        page.created_at && (!existing.created_at || page.created_at < existing.created_at)
+          ? page.created_at
+          : existing.created_at,
+      time_spent_seconds: Number(existing.time_spent_seconds || 0) + seconds,
+    });
+  });
+
+  return Array.from(grouped.values()).sort((a, b) => {
+    const secondsDiff = Number(b.time_spent_seconds || 0) - Number(a.time_spent_seconds || 0);
+    if (secondsDiff !== 0) return secondsDiff;
+    return String(a.created_at || "").localeCompare(String(b.created_at || ""));
+  });
+};
+
 export const SessionActivityCard = ({ detail }: { detail: ISessionActivityDetail }) => {
   const meta = statusMeta(detail);
   const totalSeconds = Number(detail.total_seconds ?? detail.diff_seconds ?? 0);
-  const pages = Array.isArray(detail.pages) ? detail.pages : [];
+  const pages = aggregatePagesByRoute(Array.isArray(detail.pages) ? detail.pages : []);
   const productTotalsMap = pages.reduce<Record<string, number>>((acc, page) => {
     const key = productKeyForRoute(page.page_route);
     acc[key] = (acc[key] ?? 0) + Number(page.time_spent_seconds || 0);
@@ -128,9 +160,9 @@ export const SessionActivityCard = ({ detail }: { detail: ISessionActivityDetail
         <div>
           <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
             <Route className="h-4 w-4" />
-            Pestanas visitadas
+            Tiempo acumulado por pestana
           </div>
-          <div className="divide-y divide-slate-100 rounded-lg border border-slate-100">
+          <div className="max-h-[22rem] divide-y divide-slate-100 overflow-y-auto rounded-lg border border-slate-100">
             {pages.length === 0 ? (
               <p className="px-4 py-3 text-sm text-slate-500">Sin navegacion registrada.</p>
             ) : (

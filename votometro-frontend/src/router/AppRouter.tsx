@@ -4,23 +4,26 @@ import { useAuth } from "../hooks/useAuth";
 import { useSession } from "../context/SessionContext";
 import { Spinner } from "../components/ui/Spinner";
 import MainLayout from "../layouts/MainLayout";
+import { isProductActive } from "../utils/productStatus";
 
 // Lazy-loaded pages
 const Login = lazy(() => import("../pages/Login"));
+const MfaGate = lazy(() => import("../pages/MfaGate"));
 const Votometro = lazy(() => import("../pages/Votometro"));
 const AudiVoto = lazy(() => import("../pages/Audivoto"));
 const UserAdmin = lazy(() => import("../pages/UsersAdmin"));
 const UserDetail = lazy(() => import("../pages/UserDetail"));
 const UserEdit = lazy(() => import("../pages/UserEdit"));
 const SessionsAdmin = lazy(() => import("../pages/SessionsAdmin"));
+const SessionAnalyticsDashboard = lazy(() => import("../pages/SessionAnalyticsDashboard"));
 const RolesMatrix = lazy(() => import("../pages/RolesMatrix"));
 const ResetPasswordAdmin = lazy(() => import("../pages/ResetPasswordAdmin"));
 const DivipolaUpload = lazy(() => import("../pages/DivipolaUpload"));
 
 export const AppRouter = () => {
   const { isAuthenticated, userRole, userProducts, isLoadingProducts, isMsalLoading } = useAuth();
-  const { user } = useSession();
-  const hasProduct = (name: string) => userProducts?.some((p) => p.name.toLowerCase() === name.toLowerCase() && p.enable);
+  const { user, mfaVerified, sessionToken, logoutAndCleanup } = useSession();
+  const hasProduct = (name: string) => userProducts?.some((p) => p.name.toLowerCase() === name.toLowerCase() && isProductActive(p));
 
   const routes: RouteObject[] = useMemo(() => {
     // Wait for MSAL to finish initializing before deciding routes
@@ -41,9 +44,49 @@ export const AppRouter = () => {
       ];
     }
 
+    if (sessionToken && !mfaVerified) {
+      return [
+        {
+          path: "*",
+          element: <MfaGate />,
+        },
+      ];
+    }
+
     // Doble validación para evitar race conditions:
     // 1. isLoadingProducts === true → estado controlado por SessionContext
     // 2. user === null → defensa adicional contra estados transitorios donde isLoading es false pero datos aún no disponibles
+    if (!sessionToken && !isLoadingProducts && user === null) {
+      return [
+        {
+          path: "*",
+          element: (
+            <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,#dbeafe_0,#f8fafc_42%,#ecfeff_100%)] flex items-center justify-center px-4 py-8">
+              <div className="w-full max-w-lg rounded-xl border border-slate-200 bg-white/95 p-6 shadow-2xl shadow-slate-200/70 backdrop-blur">
+                <p className="text-xs font-semibold uppercase tracking-wider text-brand-600">
+                  Sesion interna no disponible
+                </p>
+                <h1 className="mt-2 text-xl font-bold text-slate-900">
+                  No se pudo cargar la informacion de la plataforma
+                </h1>
+                <p className="mt-3 text-sm leading-6 text-slate-600">
+                  Microsoft autentico la cuenta, pero la sesion interna del aplicativo no quedo activa.
+                  Cierra la sesion y vuelve a ingresar para recrearla.
+                </p>
+                <button
+                  type="button"
+                  className="mt-5 inline-flex h-10 items-center justify-center rounded-lg bg-brand-600 px-4 text-sm font-semibold text-white transition-colors hover:bg-brand-700"
+                  onClick={() => void logoutAndCleanup({ invalidateOnServer: false, triggerMsalLogout: true })}
+                >
+                  Cerrar sesion y reintentar
+                </button>
+              </div>
+            </div>
+          ),
+        },
+      ];
+    }
+
     if (isLoadingProducts || user === null) {
       return [
         {
@@ -162,6 +205,14 @@ export const AppRouter = () => {
               <SessionsAdmin />
             </MainLayout>
           ),
+        },
+        {
+          path: "/sessions-analytics",
+          element: (
+            <MainLayout>
+              <SessionAnalyticsDashboard />
+            </MainLayout>
+          ),
         }
       );
     }
@@ -175,7 +226,7 @@ export const AppRouter = () => {
     });
 
     return protectedRoutes;
-  }, [isAuthenticated, isLoadingProducts, userProducts, userRole, user, isMsalLoading]);
+  }, [isAuthenticated, isLoadingProducts, userProducts, userRole, user, mfaVerified, sessionToken, isMsalLoading, logoutAndCleanup]);
 
   const router = useMemo(() => createBrowserRouter(routes), [routes]);
 

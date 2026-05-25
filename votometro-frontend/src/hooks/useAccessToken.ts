@@ -4,7 +4,7 @@ import { protectedResources } from "../authConfig";
 import { isDevBypassActive, MOCK_ACCESS_TOKEN } from "../devAuth/devBypass";
 
 export const useAccessToken = () => {
-  const { instance, accounts } = useMsal();
+  const { instance } = useMsal();
 
   const getToken = useCallback(async (): Promise<string> => {
     // -------------------------------------------------------------------------
@@ -14,8 +14,14 @@ export const useAccessToken = () => {
     // -------------------------------------------------------------------------
     if (isDevBypassActive()) return MOCK_ACCESS_TOKEN;
 
+    const account = instance.getActiveAccount() ?? instance.getAllAccounts()[0];
+
+    if (!account) {
+      throw new Error("No active account available to acquire token");
+    }
+
     const request = {
-      account: accounts[0],
+      account,
       scopes: protectedResources.api.scopes,
     };
 
@@ -26,7 +32,7 @@ export const useAccessToken = () => {
       const response = await instance.acquireTokenPopup(request);
       return response.accessToken;
     }
-  }, [accounts, instance]);
+  }, [instance]);
 
   return { getToken };
 };

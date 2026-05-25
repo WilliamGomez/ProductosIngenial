@@ -16,6 +16,8 @@ export interface IUser {
   enable: boolean;
   department: string;
   role: string;
+  mfa_enabled?: boolean;
+  mfa_enrolled_at?: string | null;
   products: IProduct[];
   created_at?: string;
 }

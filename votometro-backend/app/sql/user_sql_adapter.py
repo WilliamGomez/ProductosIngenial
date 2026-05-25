@@ -43,6 +43,7 @@ class UserSqlAdapter(IUserSqlRepository):
 
     def list_users(self) -> List[User]:
         cursor = self.connection.cursor()
+        self._expire_elapsed_products(cursor)
         cursor.execute(self._users_with_products_query())
         columns = [column[0] for column in cursor.description]
         rows = cursor.fetchall()
@@ -68,6 +69,7 @@ class UserSqlAdapter(IUserSqlRepository):
 
     def get_user(self, user_id: str) -> User:
         cursor = self.connection.cursor()
+        self._expire_elapsed_products(cursor)
         cursor.execute(
             f"{self._users_with_products_query()} WHERE u.user_id = ? ORDER BY up.id DESC;",
             user_id,
@@ -106,6 +108,8 @@ class UserSqlAdapter(IUserSqlRepository):
                 u.reference,
                 u.reference2,
                 u.personal_email,
+                COALESCE(u.mfa_enabled, 0) AS mfa_enabled,
+                u.mfa_enrolled_at,
                 up.id,
                 p.name AS product_name,
                 up.contract_duration,
@@ -125,11 +129,24 @@ class UserSqlAdapter(IUserSqlRepository):
             LEFT JOIN dbo.Products p ON p.id = up.product_id
         """
 
+    def _expire_elapsed_products(self, cursor) -> None:
+        cursor.execute(
+            """
+            UPDATE dbo.User_Products
+            SET enable = 0,
+                updated_at = SYSUTCDATETIME()
+            WHERE enable = 1
+              AND expiration IS NOT NULL
+              AND expiration <= SYSUTCDATETIME();
+            """
+        )
+        self.connection.commit()
+
     def _user_from_row(self, row, user_id: str) -> User:
         identity_document_value = row.get("identity_document")
         created_at = row.get("created_at")
 
-        return User(
+        user = User(
             id=user_id,
             email=row["email"],
             department=row["department"],
@@ -150,6 +167,9 @@ class UserSqlAdapter(IUserSqlRepository):
             personal_email=row.get("personal_email"),
             products=[],
         )
+        user.mfa_enabled = bool(row.get("mfa_enabled"))
+        user.mfa_enrolled_at = self._format_datetime(row.get("mfa_enrolled_at"))
+        return user
 
     def _product_payload(self, prod_row) -> dict | None:
         if pd.isnull(prod_row["product_name"]):
@@ -218,6 +238,50 @@ class UserSqlAdapter(IUserSqlRepository):
         )
         self.connection.commit()
 
+    def delete_user(self, user_id: str) -> None:
+        cursor = self.connection.cursor()
+        previous_autocommit = self.connection.autocommit
+        self.connection.autocommit = False
+        try:
+            cursor.execute(
+                """
+                SET NOCOUNT ON;
+                DECLARE @UserId NVARCHAR(100) = ?;
+
+                DELETE l
+                FROM dbo.Session_Navigation_Logs l
+                INNER JOIN dbo.UserSessions s ON s.session_id = l.session_id
+                WHERE s.user_id = @UserId;
+
+                DELETE FROM dbo.UserSessions
+                WHERE user_id = @UserId;
+
+                DELETE z
+                FROM dbo.User_Zones z
+                INNER JOIN dbo.User_Products up ON up.id = z.user_product_id
+                WHERE up.user_id = @UserId;
+
+                DELETE FROM dbo.User_Products
+                WHERE user_id = @UserId;
+
+                DELETE FROM dbo.Users
+                WHERE user_id = @UserId;
+
+                SELECT @@ROWCOUNT AS deleted_users;
+                """,
+                user_id,
+            )
+            row = cursor.fetchone()
+            if not row or int(row[0] or 0) == 0:
+                raise LookupError("User not found")
+            self.connection.commit()
+        except Exception:
+            self.connection.rollback()
+            raise
+        finally:
+            self.connection.autocommit = previous_autocommit
+            cursor.close()
+
     def upsert_user_products(self, user_id: str, products: List[Product]):
         cursor = self.connection.cursor()
 
@@ -226,6 +290,7 @@ class UserSqlAdapter(IUserSqlRepository):
         self.connection.commit()
 
     def _upsert_user_product_contract(self, cursor, user_id: str, product: Product) -> int:
+        effective_enable = bool(product.enable) and not self._is_expired_product(product)
         cursor.execute(
             """
             DECLARE @ProductId INT;
@@ -285,18 +350,29 @@ class UserSqlAdapter(IUserSqlRepository):
             product.duration_unit,
             product.expiration,
             product.amount_cop or 0,
-            bool(product.enable),
+            effective_enable,
             product.contract_duration,
             product.duration_unit,
             product.expiration,
             product.amount_cop or 0,
-            bool(product.enable),
+            effective_enable,
             user_id,
         )
         row = cursor.fetchone()
         if not row:
             raise RuntimeError("SQL Server no retorno User_Products.id")
         return int(row[0])
+
+    def _is_expired_product(self, product: Product) -> bool:
+        if product.expiration is None:
+            return False
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute("SELECT IIF(TRY_CONVERT(DATETIME, ?) <= SYSUTCDATETIME(), 1, 0);", product.expiration)
+            row = cursor.fetchone()
+            return bool(row and row[0])
+        finally:
+            cursor.close()
 
     def _get_product_id(self, user_id: str, product_name: str) -> int | None:
         """Get the ID of an existing product for a user by product name."""
@@ -353,12 +429,15 @@ class UserSqlAdapter(IUserSqlRepository):
     def get_enabled_product_names(self, user_id: str) -> List[str]:
         """Get list of enabled product names for a user."""
         cursor = self.connection.cursor()
+        self._expire_elapsed_products(cursor)
         cursor.execute(
             """
             SELECT p.name
             FROM dbo.User_Products up
             INNER JOIN dbo.Products p ON p.id = up.product_id
-            WHERE up.user_id = ? AND up.enable = 1
+            WHERE up.user_id = ?
+              AND up.enable = 1
+              AND (up.expiration IS NULL OR up.expiration > SYSUTCDATETIME())
             """,
             (user_id,),
         )

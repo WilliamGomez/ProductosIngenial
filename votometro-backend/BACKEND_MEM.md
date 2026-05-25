@@ -1,5 +1,6 @@
 # BACKEND_MEM — Votometro Backend
 > Memoria de contexto para desarrollo continuo. Actualizar tras cada cambio significativo.
+> **Última actualización:** 2026-05-15 — Parche HAL-18 (generación segura de contraseña) + módulo de email.
 
 ---
 
@@ -8,7 +9,7 @@
 ```
 function_app.py          ← Entry point, registra blueprints
 domain/
-  models/                ← Entidades puras: User, Product, Department, Municipality, PowerBI
+  models/                ← Entidades puras: User, Product, UserZone, Department, Municipality, PowerBI
   repositories/          ← Interfaces abstractas (contratos)
   exceptions.py          ← DomainException, UserAlreadyExistsException, UserNotFoundException
 app/
@@ -17,10 +18,14 @@ app/
   ms_graph/              ← Integración Azure AD / MS Graph
   power_bi/              ← Integración Power BI API
 use_cases/               ← Orquestación de lógica de aplicación
+  create_user.py         ← ✅ HAL-18 parcheado: genera contraseña en servidor + envía email
 shared/
-  utils.py               ← decode_token / verify_and_decode_token / calculate_expiration
+  utils.py               ← decode_token / verify_and_decode_token / json_response (UTF-8)
   msal_auth.py           ← Token para MS Graph (client_credentials)
   power_bi_auth.py       ← Token para Power BI (client_credentials)
+  email_service.py       ← ✅ NUEVO: send_welcome_email() vía SMTP (smtplib + MIME)
+  templates/
+    welcome_email.html   ← ✅ NUEVO: plantilla HTML responsiva para correo de bienvenida
 ```
 
 **Flujo de request:** HTTP Function → `decode_token` (JWT) → Use Case → Adaptador SQL/Graph/PowerBI → DB/API
@@ -76,8 +81,19 @@ shared/
 - **Riesgo:** Sin function key de Azure como segunda barrera. La única defensa es la lógica JWT manual.
 - **Acción pendiente:** Evaluar migrar a `AuthLevel.FUNCTION` o `AuthLevel.ADMIN` en producción.
 
+### ✅ HAL-18 · Contraseña generada en servidor — CERRADO (2026-05-15)
+- **Archivos modificados:** `use_cases/create_user.py`
+- **Cambios aplicados:**
+  - `password = user_data.get("password")` **eliminado** — el payload del frontend ya no puede inyectar la contraseña.
+  - Nueva función `_generate_temp_password(length=14)` con `secrets.SystemRandom` — garantiza al menos 1 mayúscula + 1 minúscula + 1 dígito + 1 símbolo (política de complejidad Azure AD).
+  - La contraseña generada **NO se incluye en la respuesta HTTP** (se elimina con `result.pop("password", None)`).
+  - Se integra `send_welcome_email()` justo después de crear el usuario — envía las credenciales al `personal_email`. Fallo no fatal.
+- **Nuevos módulos:** `shared/email_service.py`, `shared/templates/welcome_email.html`.
+- **Variables de entorno requeridas:** `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM_NAME`, `FRONTEND_URL`.
+
 ### 🔴 C-04 · Password devuelta en texto plano en respuesta HTTP
-- **Archivos:** `domain/models/user.py:16`, `use_cases/create_user.py:77`, `user_functions.py:39`
+- **Archivos:** `domain/models/user.py:16`, `use_cases/create_user.py`, `user_functions.py:39`
+- **Estado:** ⚠️ Parcialmente mitigado — `create_user.py` ya no devuelve `password` en la respuesta. Aún pendiente limpiar el campo del modelo `User` y la respuesta de `user_functions.py`.
 - **Riesgo:** `created_user.__dict__` incluye el campo `password` y se serializa en la respuesta `201`.
 - **Acción pendiente:** Eliminar `password` del `__dict__` antes de retornar, o eliminar el campo del modelo.
 

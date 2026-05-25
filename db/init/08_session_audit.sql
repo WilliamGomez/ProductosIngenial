@@ -23,6 +23,10 @@ IF COL_LENGTH('dbo.UserSessions', 'status') IS NULL
     ALTER TABLE dbo.UserSessions ADD status NVARCHAR(20) NULL;
 GO
 
+IF COL_LENGTH('dbo.UserSessions', 'user_agent') IS NULL
+    ALTER TABLE dbo.UserSessions ADD user_agent NVARCHAR(512) NULL;
+GO
+
 UPDATE dbo.UserSessions
 SET
     login_time = COALESCE(login_time, issued_at, created_at),
@@ -35,6 +39,28 @@ SET
 WHERE login_time IS NULL
    OR last_activity_time IS NULL
    OR status IS NULL;
+GO
+
+CREATE OR ALTER PROCEDURE dbo.ExpireIdleUserSessions
+    @IdleTimeoutSeconds INT = 7200
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    DECLARE @Now DATETIME2 = SWITCHOFFSET(SYSDATETIMEOFFSET(), '-05:00');
+
+    UPDATE dbo.UserSessions
+    SET is_active = 0,
+        status = N'Expired_Idle',
+        logout_time = COALESCE(
+            logout_time,
+            DATEADD(SECOND, @IdleTimeoutSeconds, COALESCE(last_activity_time, issued_at, created_at))
+        ),
+        updated_at = @Now
+    WHERE is_active = 1
+      AND COALESCE(status, N'Active') = N'Active'
+      AND DATEDIFF(SECOND, COALESCE(last_activity_time, issued_at, created_at), @Now) > @IdleTimeoutSeconds;
+END;
 GO
 
 IF NOT EXISTS (
@@ -89,7 +115,8 @@ CREATE OR ALTER PROCEDURE dbo.CreateUserSession
     @IssuedAt      DATETIME2,
     @IpAddress     NVARCHAR(45),
     @IsActive      BIT = 1,
-    @IsBlocked     BIT = 0
+    @IsBlocked     BIT = 0,
+    @UserAgent     NVARCHAR(512) = NULL
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -111,7 +138,8 @@ BEGIN
         login_time,
         last_activity_time,
         logout_time,
-        status
+        status,
+        user_agent
     )
     VALUES (
         NEWID(),
@@ -128,7 +156,8 @@ BEGIN
         @IssuedAt,
         @IssuedAt,
         NULL,
-        CASE WHEN @IsActive = 1 THEN N'Active' ELSE N'Closed' END
+        CASE WHEN @IsActive = 1 THEN N'Active' ELSE N'Closed' END,
+        LEFT(@UserAgent, 512)
     );
 END;
 GO
@@ -180,6 +209,8 @@ AS
 BEGIN
     SET NOCOUNT ON;
 
+    EXEC dbo.ExpireIdleUserSessions @IdleTimeoutSeconds = 7200;
+
     SELECT TOP 1
         us.session_id,
         u.user_id,
@@ -212,6 +243,8 @@ CREATE OR ALTER PROCEDURE dbo.GetUserSessionsInfo
 AS
 BEGIN
     SET NOCOUNT ON;
+
+    EXEC dbo.ExpireIdleUserSessions @IdleTimeoutSeconds = 7200;
 
     SELECT
         us.session_id,

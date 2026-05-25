@@ -72,7 +72,8 @@ class UserProductsSqlAdapter:
 
     def _validate_products(self, products: List[Product]) -> None:
         for product in products:
-            if product.enable and not product.zones:
+            effective_enable = bool(product.enable) and not self._is_expired_product(product)
+            if effective_enable and not product.zones:
                 raise ValueError(
                     f"Producto '{product.name}' esta habilitado pero no tiene zonas asignadas."
                 )
@@ -91,10 +92,35 @@ class UserProductsSqlAdapter:
                         f"Zona del producto '{product.name}': cod_mun debe tener 3 digitos"
                     )
 
+    def _is_expired_product(self, product: Product) -> bool:
+        if product.expiration is None:
+            return False
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute("SELECT IIF(TRY_CONVERT(DATETIME, ?) <= SYSUTCDATETIME(), 1, 0);", product.expiration)
+            row = cursor.fetchone()
+            return bool(row and row[0])
+        finally:
+            cursor.close()
+
+    def _expire_elapsed_products(self, cursor: pyodbc.Cursor) -> None:
+        cursor.execute(
+            """
+            UPDATE dbo.User_Products
+            SET enable = 0,
+                updated_at = SYSUTCDATETIME()
+            WHERE enable = 1
+              AND expiration IS NOT NULL
+              AND expiration <= SYSUTCDATETIME();
+            """
+        )
+        self.connection.commit()
+
     def _upsert_product(
         self, cursor: pyodbc.Cursor, user_id: str, product: Product
     ) -> int:
         """Insert/update dbo.User_Products and return the contractual id."""
+        effective_enable = bool(product.enable) and not self._is_expired_product(product)
         if product.id is not None:
             cursor.execute(
                 """
@@ -113,7 +139,7 @@ class UserProductsSqlAdapter:
                 product.duration_unit,
                 product.expiration,
                 product.amount_cop or 0,
-                bool(product.enable),
+                effective_enable,
                 product.id,
                 user_id,
             )
@@ -144,7 +170,7 @@ class UserProductsSqlAdapter:
             product.duration_unit,
             product.expiration,
             product.amount_cop or 0,
-            bool(product.enable),
+            effective_enable,
             user_id,
             product.name,
         )
@@ -178,7 +204,7 @@ class UserProductsSqlAdapter:
             product.duration_unit,
             product.expiration,
             product.amount_cop or 0,
-            bool(product.enable),
+            effective_enable,
         )
         row = cursor.fetchone()
         if row is None:
@@ -189,6 +215,7 @@ class UserProductsSqlAdapter:
         """Return enabled products for a user with their enabled zones."""
         try:
             cursor = self.connection.cursor()
+            self._expire_elapsed_products(cursor)
             cursor.execute(
                 """
                 SELECT
@@ -207,7 +234,9 @@ class UserProductsSqlAdapter:
                     ) AS zones_json
                 FROM dbo.User_Products up
                 INNER JOIN dbo.Products p ON p.id = up.product_id
-                WHERE up.user_id = ? AND up.enable = 1
+                WHERE up.user_id = ?
+                  AND up.enable = 1
+                  AND (up.expiration IS NULL OR up.expiration > SYSUTCDATETIME())
                 ORDER BY up.id DESC;
                 """,
                 str(user_id),
@@ -270,6 +299,7 @@ class UserProductsSqlAdapter:
         """Soft-disable all products for a user."""
         cursor = self.connection.cursor()
         try:
+            self._expire_elapsed_products(cursor)
             cursor.execute(
                 "UPDATE dbo.User_Products SET enable = 0 WHERE user_id = ?",
                 str(user_id),
@@ -285,6 +315,7 @@ class UserProductsSqlAdapter:
         """Return one product with its enabled zones."""
         cursor = self.connection.cursor()
         try:
+            self._expire_elapsed_products(cursor)
             cursor.execute(
                 """
                 SELECT
@@ -297,7 +328,8 @@ class UserProductsSqlAdapter:
                     up.enable
                 FROM dbo.User_Products up
                 INNER JOIN dbo.Products p ON p.id = up.product_id
-                WHERE up.id = ?;
+                WHERE up.id = ?
+                  AND (up.expiration IS NULL OR up.expiration > SYSUTCDATETIME());
                 """,
                 product_id,
             )

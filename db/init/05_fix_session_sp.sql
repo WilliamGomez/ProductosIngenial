@@ -32,6 +32,10 @@ SET ANSI_NULLS ON;
 SET QUOTED_IDENTIFIER ON;
 GO
 
+IF COL_LENGTH('dbo.UserSessions', 'user_agent') IS NULL
+    ALTER TABLE dbo.UserSessions ADD user_agent NVARCHAR(512) NULL;
+GO
+
 CREATE OR ALTER PROCEDURE [dbo].[CreateUserSession]
     @UserId        NVARCHAR(255),
     @DeviceId      NVARCHAR(100),
@@ -39,7 +43,8 @@ CREATE OR ALTER PROCEDURE [dbo].[CreateUserSession]
     @IssuedAt      DATETIME2,
     @IpAddress     NVARCHAR(45),
     @IsActive      BIT = 1,
-    @IsBlocked     BIT = 0
+    @IsBlocked     BIT = 0,
+    @UserAgent     NVARCHAR(512) = NULL
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -54,7 +59,8 @@ BEGIN
         ip_address,
         is_blocked,
         created_at,
-        updated_at
+        updated_at,
+        user_agent
     )
     VALUES (
         NEWID(),           -- ← fix: SQL genera el UUID en cada insert
@@ -66,7 +72,8 @@ BEGIN
         @IpAddress,
         @IsBlocked,
         SWITCHOFFSET(SYSDATETIMEOFFSET(), '-05:00'),
-        SWITCHOFFSET(SYSDATETIMEOFFSET(), '-05:00')
+        SWITCHOFFSET(SYSDATETIMEOFFSET(), '-05:00'),
+        LEFT(@UserAgent, 512)
     );
 END;
 GO

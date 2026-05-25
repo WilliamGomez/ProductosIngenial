@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="es" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="x-apple-disable-message-reformatting" />
+  <meta name="format-detection" content="telephone=no,address=no,email=no,date=no,url=no" />
+  <title>Bienvenido a Votómetro / Audivoto</title>
+  <!--[if mso]>
+  <noscript>
+    <xml>
+      <o:OfficeDocumentSettings>
+        <o:PixelsPerInch>96</o:PixelsPerInch>
+      </o:OfficeDocumentSettings>
+    </xml>
+  </noscript>
+  <![endif]-->
+  <style>
+    /* ── Reset ─────────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; }
+    body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+    table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+    img { -ms-interpolation-mode: bicubic; border: 0; line-height: 100%;
+          outline: none; text-decoration: none; }
+    body { margin: 0 !important; padding: 0 !important; width: 100% !important; }
+
+    /* ── Tipografía ─────────────────────────────────────────────────── */
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+           'Helvetica Neue', Arial, sans-serif; }
+
+    /* ── Responsivo ─────────────────────────────────────────────────── */
+    @media only screen and (max-width: 600px) {
+      .email-container { width: 100% !important; }
+      .stack-on-mobile { display: block !important; width: 100% !important; }
+      .mobile-padding  { padding-left: 24px !important; padding-right: 24px !important; }
+      .cta-btn         { width: 100% !important; text-align: center !important; }
+    }
+
+    /* ── Dark mode ──────────────────────────────────────────────────── */
+    @media (prefers-color-scheme: dark) {
+      .email-body-bg   { background-color: #1a1a2e !important; }
+      .email-card      { background-color: #16213e !important; }
+      .text-primary    { color: #e8e8f0 !important; }
+      .text-secondary  { color: #a0a0b8 !important; }
+      .divider         { border-color: #2a2a4a !important; }
+      .credentials-box { background-color: #0d0d1e !important; border-color: #2a3a6a !important; }
+      .footer-bg       { background-color: #0d0d1e !important; }
+    }
+  </style>
+</head>
+
+<body class="email-body-bg" style="margin:0;padding:0;background-color:#f0f2f8;">
+
+  <!-- ───────────────────────────────────── PREVIEW TEXT (oculto) ── -->
+  <div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;color:#f0f2f8;line-height:1px;">
+    Bienvenido a Votómetro · Tus credenciales de acceso están listas.
+    &nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;
+    &nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;
+  </div>
+
+  <!-- ───────────────────────────────────────────────── WRAPPER ── -->
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"
+         style="background-color:#f0f2f8;">
+    <tr>
+      <td align="center" style="padding:40px 12px;">
+
+        <!-- ───────────────── EMAIL CARD ── -->
+        <table role="presentation" class="email-container" width="600" cellspacing="0"
+               cellpadding="0" border="0" style="max-width:600px;width:100%;">
+
+          <!-- ╔══════════════════════ HEADER ══════════════════════╗ -->
+          <tr>
+            <td class="email-card" align="center"
+                style="background:#1b2a5e;border-radius:12px 12px 0 0;padding:40px 48px 32px;">
+
+              <!-- Logo / marca -->
+              <table role="presentation" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td align="center">
+                    <!-- Ícono SVG embebido (no depende de servidor de imágenes) -->
+                    <div style="display:inline-block;width:56px;height:56px;
+                                background:rgba(255,255,255,0.12);border-radius:14px;
+                                line-height:56px;text-align:center;margin-bottom:20px;">
+                      <svg width="32" height="32" viewBox="0 0 32 32" fill="none"
+                           xmlns="http://www.w3.org/2000/svg"
+                           style="vertical-align:middle;">
+                        <rect width="32" height="32" rx="8" fill="#4a7cf7"/>
+                        <path d="M8 22 L14 10 L16 16 L18 12 L24 22 Z"
+                              fill="white" opacity="0.95"/>
+                        <circle cx="24" cy="10" r="3" fill="#7eb8f7"/>
+                      </svg>
+                    </div>
+                    <br/>
+                    <span style="font-size:22px;font-weight:700;color:#ffffff;
+                                 letter-spacing:-0.3px;">
+                      Ingenial <span style="color:#7eb8f7;">AI</span>
+                    </span>
+                    <br/>
+                    <span style="font-size:12px;color:#8fa8d8;letter-spacing:3px;
+                                 text-transform:uppercase;margin-top:4px;display:block;">
+                      Votómetro · Audivoto
+                    </span>
+                  </td>
+                </tr>
+              </table>
+
+            </td>
+          </tr>
+          <!-- ╚══════════════════════ /HEADER ═════════════════════╝ -->
+
+          <!-- ╔══════════════════════ BODY ════════════════════════╗ -->
+          <tr>
+            <td class="email-card mobile-padding"
+                style="background:#ffffff;padding:48px 56px 40px;border-left:1px solid #e4e8f0;
+                       border-right:1px solid #e4e8f0;">
+
+              <!-- Saludo -->
+              <p class="text-primary"
+                 style="margin:0 0 8px;font-size:13px;color:#6b7a9a;
+                        text-transform:uppercase;letter-spacing:1.5px;font-weight:600;">
+                Bienvenido a la plataforma
+              </p>
+              <h1 class="text-primary"
+                  style="margin:0 0 24px;font-size:26px;font-weight:700;
+                         color:#1b2a5e;line-height:1.25;">
+                Hola, <span style="color:#4a7cf7;">{{display_name}}</span>
+              </h1>
+
+              <p class="text-secondary"
+                 style="margin:0 0 32px;font-size:15px;line-height:1.7;color:#4a5568;">
+                Tu cuenta en la plataforma electoral de <strong>Ingenial IA</strong>
+                ha sido creada exitosamente. A continuación encontrarás tus
+                credenciales de acceso.
+              </p>
+
+              <!-- Divider -->
+              <hr class="divider"
+                  style="border:none;border-top:1px solid #e8ecf5;margin:0 0 32px;"/>
+
+              <!-- ─── Bloque credenciales ─── -->
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0"
+                     border="0" class="credentials-box"
+                     style="background:#f7f9ff;border:1.5px solid #d0daf7;
+                            border-radius:10px;margin-bottom:32px;">
+                <tr>
+                  <td style="padding:28px 32px;">
+
+                    <p style="margin:0 0 18px;font-size:11px;font-weight:700;
+                               color:#7b8cb0;text-transform:uppercase;letter-spacing:2px;">
+                      Credenciales de acceso
+                    </p>
+
+                    <!-- Correo institucional -->
+                    <table role="presentation" width="100%" cellspacing="0"
+                           cellpadding="0" border="0" style="margin-bottom:14px;">
+                      <tr>
+                        <td style="padding-bottom:4px;">
+                          <span style="font-size:11px;color:#8fa0c0;
+                                       font-weight:600;text-transform:uppercase;
+                                       letter-spacing:1px;">
+                            Correo institucional
+                          </span>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td>
+                          <span style="font-size:15px;font-weight:600;color:#1b2a5e;
+                                       font-family:monospace,monospace;
+                                       background:#edf1ff;padding:6px 12px;
+                                       border-radius:6px;display:inline-block;
+                                       border:1px solid #d0daf7;">
+                            {{institutional_email}}
+                          </span>
+                        </td>
+                      </tr>
+                    </table>
+
+                    <!-- Contraseña temporal -->
+                    <table role="presentation" width="100%" cellspacing="0"
+                           cellpadding="0" border="0" style="margin-bottom:6px;">
+                      <tr>
+                        <td style="padding-bottom:4px;">
+                          <span style="font-size:11px;color:#8fa0c0;
+                                       font-weight:600;text-transform:uppercase;
+                                       letter-spacing:1px;">
+                            Contraseña temporal
+                          </span>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td>
+                          <span style="font-size:17px;font-weight:700;color:#1b2a5e;
+                                       font-family:monospace,monospace;letter-spacing:2px;
+                                       background:#edf1ff;padding:8px 14px;
+                                       border-radius:6px;display:inline-block;
+                                       border:1.5px solid #a5b8f7;">
+                            {{password}}
+                          </span>
+                        </td>
+                      </tr>
+                    </table>
+
+                  </td>
+                </tr>
+              </table>
+
+              <!-- Aviso cambio contraseña -->
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0"
+                     border="0" style="margin-bottom:36px;">
+                <tr>
+                  <td style="background:#fff8e6;border-left:4px solid #f5a623;
+                              border-radius:0 8px 8px 0;padding:14px 18px;">
+                    <p style="margin:0;font-size:13px;color:#7a5500;line-height:1.6;">
+                      <strong>⚠️ Por seguridad:</strong> Al iniciar sesión por primera
+                      vez, el sistema te pedirá que establezcas una nueva contraseña.
+                      La contraseña temporal no podrá volver a usarse.
+                    </p>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- Fecha de registro -->
+              <p class="text-secondary"
+                 style="margin:0 0 36px;font-size:13px;color:#8a95aa;line-height:1.5;">
+                <strong style="color:#6b7a9a;">Fecha de registro:</strong>
+                &nbsp;{{datetime}}
+              </p>
+
+              <!-- ─── CTA Button ─── -->
+              <table role="presentation" cellspacing="0" cellpadding="0" border="0"
+                     class="cta-btn" style="margin:0 auto 8px;">
+                <tr>
+                  <td align="center"
+                      style="border-radius:10px;background:linear-gradient(135deg,#4a7cf7 0%,#1b5cdb 100%);
+                             box-shadow:0 4px 18px rgba(74,124,247,0.38);">
+                    <a href="{{login_url}}" target="_blank"
+                       style="display:inline-block;padding:16px 48px;font-size:15px;
+                              font-weight:700;color:#ffffff;text-decoration:none;
+                              letter-spacing:0.3px;border-radius:10px;
+                              mso-padding-alt:16px 48px;">
+                      Acceder a la Plataforma &nbsp;→
+                    </a>
+                  </td>
+                </tr>
+              </table>
+
+              <p class="text-secondary"
+                 style="margin:12px 0 0;font-size:12px;color:#a0a8bc;
+                        text-align:center;line-height:1.5;">
+                Si el botón no funciona, copia y pega este enlace en tu navegador:<br/>
+                <a href="{{login_url}}" style="color:#4a7cf7;word-break:break-all;">
+                  {{login_url}}
+                </a>
+              </p>
+
+            </td>
+          </tr>
+          <!-- ╚══════════════════════ /BODY ═══════════════════════╝ -->
+
+          <!-- ╔══════════════════════ FOOTER ══════════════════════╗ -->
+          <tr>
+            <td class="footer-bg"
+                style="background:#f0f4fc;border-radius:0 0 12px 12px;
+                       border:1px solid #e4e8f0;border-top:none;
+                       padding:28px 48px 32px;">
+
+              <p style="margin:0 0 6px;font-size:12px;color:#8a95b8;
+                         text-align:center;line-height:1.6;">
+                Este es un mensaje automático. Por favor no respondas a este correo.
+              </p>
+              <p style="margin:0;font-size:12px;color:#8a95b8;
+                         text-align:center;line-height:1.6;">
+                Si tienes dudas, contacta al administrador de la plataforma.
+              </p>
+
+              <hr style="border:none;border-top:1px solid #dde3f0;margin:20px 0;"/>
+
+              <p style="margin:0;font-size:11px;color:#a8b0c8;
+                         text-align:center;line-height:1.5;">
+                © 2026 <strong>Ingenial IA</strong> · Plataforma Votómetro / Audivoto<br/>
+                Todos los derechos reservados.
+              </p>
+            </td>
+          </tr>
+          <!-- ╚══════════════════════ /FOOTER ════════════════════╝ -->
+
+        </table>
+        <!-- ───────────────── /EMAIL CARD ── -->
+
+      </td>
+    </tr>
+  </table>
+  <!-- ─────────────────────────────────────────────── /WRAPPER ── -->
+
+</body>
+</html>

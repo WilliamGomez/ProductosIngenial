@@ -101,7 +101,10 @@ class UserGraphAdapter(IUserRepository):
         res.raise_for_status()
 
     def delete_user(self, user_id: str) -> None:
-        raise NotImplementedError()
+        response = requests.delete(f"{GRAPH_URL}/users/{user_id}", headers=self._headers())
+        if response.status_code == 404:
+            return
+        response.raise_for_status()
 
     def list_users(self):
         url = f"{GRAPH_URL}/users?$select=id,displayName,userPrincipalName,accountEnabled,department&$filter=department eq 'IngenialAI'"

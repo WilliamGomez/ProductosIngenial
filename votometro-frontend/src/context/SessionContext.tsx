@@ -7,6 +7,7 @@ import type { IUser } from "../interfaces/IUser";
 import type { IProduct } from "../interfaces/IProduct";
 import type { ISessionInfo } from "../interfaces/ISessionInfo";
 import { getUser, getUsersSessionsInfo, invalidateSession, validateSession } from "../services/api";
+import { isProductActive } from "../utils/productStatus";
 import { getDeviceId } from "../utils/GetDeviceId";
 import { protectedResources } from "../authConfig";
 import {
@@ -34,9 +35,11 @@ interface SessionContextValue {
   products: IProduct[];
   sessionToken: string | null;
   deviceId: string | null;
+  mfaVerified: boolean;
   isLoading: boolean;
   refreshSessionState: (sessionTokenOverride?: string, userIdOverride?: string) => Promise<void>;
   validateSessionOnLogin: (payload: ValidateSessionPayload) => Promise<void>;
+  completeMfaVerification: () => Promise<void>;
   logoutAndCleanup: (options?: LogoutOptions) => Promise<void>;
 }
 
@@ -45,12 +48,97 @@ const SessionContext = createContext<SessionContextValue | undefined>(undefined)
 const STORAGE_KEYS = {
   sessionToken: "session_token",
   deviceId: "device_id",
+  activeTab: "votometro_active_tab",
+  tabId: "votometro_tab_id",
+  mfaVerifiedPrefix: "votometro_mfa_verified",
 } as const;
 
 const HEARTBEAT_INTERVAL_MS = 15_000; // Check every 15 seconds for single-session enforcement
+const TAB_LOCK_TTL_MS = 120_000;
+const TAB_LOCK_PULSE_MS = 10_000;
+
+interface ActiveTabLock {
+  tabId: string;
+  userId: string;
+  updatedAt: number;
+}
+
+const createTabId = (): string => {
+  const navigationEntry = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined;
+  const storedTabId = sessionStorage.getItem(STORAGE_KEYS.tabId);
+
+  if (navigationEntry?.type === "reload" && storedTabId) {
+    return storedTabId;
+  }
+
+  const nextTabId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+  sessionStorage.setItem(STORAGE_KEYS.tabId, nextTabId);
+  return nextTabId;
+};
+
+const readActiveTabLock = (): ActiveTabLock | null => {
+  try {
+    const rawLock = localStorage.getItem(STORAGE_KEYS.activeTab);
+    if (!rawLock) return null;
+    const parsed = JSON.parse(rawLock) as Partial<ActiveTabLock>;
+    if (!parsed.tabId || !parsed.userId || typeof parsed.updatedAt !== "number") {
+      return null;
+    }
+    return parsed as ActiveTabLock;
+  } catch (error) {
+    console.warn("[SessionContext] Invalid active tab lock, clearing it", error);
+    localStorage.removeItem(STORAGE_KEYS.activeTab);
+    return null;
+  }
+};
+
+const hasConflictingActiveTab = (userId: string, tabId: string): boolean => {
+  const lock = readActiveTabLock();
+  if (!lock || lock.userId !== userId || lock.tabId === tabId) {
+    return false;
+  }
+  return Date.now() - lock.updatedAt < TAB_LOCK_TTL_MS;
+};
+
+const writeActiveTabLock = (userId: string, tabId: string) => {
+  localStorage.setItem(
+    STORAGE_KEYS.activeTab,
+    JSON.stringify({ tabId, userId, updatedAt: Date.now() } satisfies ActiveTabLock)
+  );
+};
+
+const releaseActiveTabLock = (tabId: string) => {
+  const lock = readActiveTabLock();
+  if (lock?.tabId === tabId) {
+    localStorage.removeItem(STORAGE_KEYS.activeTab);
+  }
+};
+
+const mfaStorageKey = (sessionToken: string) => `${STORAGE_KEYS.mfaVerifiedPrefix}:${sessionToken}`;
+
+const readStoredMfaVerified = (sessionToken: string | null): boolean => {
+  if (!sessionToken) return false;
+  return sessionStorage.getItem(mfaStorageKey(sessionToken)) === "1";
+};
+
+const writeStoredMfaVerified = (sessionToken: string | null, verified: boolean) => {
+  if (!sessionToken) return;
+  const key = mfaStorageKey(sessionToken);
+  if (verified) {
+    sessionStorage.setItem(key, "1");
+  } else {
+    sessionStorage.removeItem(key);
+  }
+};
 
 // Map internal reason codes to user-friendly messages
 const getLogoutMessage = (reason: string): { title: string; text: string } | null => {
+  if (reason.includes("Duplicate tab")) {
+    return {
+      title: "Sesion ya abierta",
+      text: "Esta cuenta ya esta activa en otra pestana de este navegador. Cierra la pestana anterior para iniciar aqui.",
+    };
+  }
   if (reason.includes("Session not found") || reason.includes("Session marked as inactive")) {
     return {
       title: "Sesión terminada",
@@ -120,12 +208,16 @@ export const SessionProvider = ({ children }: { children: ReactNode }) => {
       products: getMockProducts(),
       sessionToken: MOCK_SESSION_TOKEN,
       deviceId: MOCK_DEVICE_ID,
+      mfaVerified: true,
       isLoading: false,
       refreshSessionState: async () => {
         // no-op: en bypass no hay backend que consultar.
       },
       validateSessionOnLogin: async () => {
         // no-op: el botón de login se cortocircuita aguas arriba.
+      },
+      completeMfaVerification: async () => {
+        // no-op
       },
       logoutAndCleanup: async () => {
         // eslint-disable-next-line no-console
@@ -143,12 +235,15 @@ export const SessionProvider = ({ children }: { children: ReactNode }) => {
   const [products, setProducts] = useState<IProduct[]>([]);
   const [sessionToken, setSessionToken] = useState<string | null>(null);
   const [deviceId, setDeviceId] = useState<string | null>(null);
+  const [mfaVerified, setMfaVerified] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isInitialized, setIsInitialized] = useState(false);
   const [explicitUserId, setExplicitUserId] = useState<string | null>(null);
   const MAX_HEARTBEAT_FAILURES = 5;
 
   const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const tabLockPulseRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const tabIdRef = useRef<string>(createTabId());
   const sessionTokenRef = useRef<string | null>(null);
   const deviceIdRef = useRef<string | null>(null);
   const userIdRef = useRef<string | null>(null);
@@ -171,6 +266,7 @@ export const SessionProvider = ({ children }: { children: ReactNode }) => {
     sessionTokenRef.current = tokenValue;
     setDeviceId(deviceValue);
     deviceIdRef.current = deviceValue;
+    setMfaVerified(readStoredMfaVerified(tokenValue));
   }, []);
 
   const clearHeartbeat = useCallback(() => {
@@ -180,15 +276,35 @@ export const SessionProvider = ({ children }: { children: ReactNode }) => {
     }
   }, []);
 
+  const clearActiveTabPulse = useCallback(() => {
+    if (tabLockPulseRef.current) {
+      clearInterval(tabLockPulseRef.current);
+      tabLockPulseRef.current = null;
+    }
+    releaseActiveTabLock(tabIdRef.current);
+  }, []);
+
+  const startActiveTabPulse = useCallback((userId: string) => {
+    clearActiveTabPulse();
+    writeActiveTabLock(userId, tabIdRef.current);
+    tabLockPulseRef.current = setInterval(() => {
+      writeActiveTabLock(userId, tabIdRef.current);
+    }, TAB_LOCK_PULSE_MS);
+  }, [clearActiveTabPulse]);
+
   const cleanupLocalSession = useCallback(() => {
+    const tokenToClear = sessionTokenRef.current;
     clearHeartbeat();
+    clearActiveTabPulse();
     setSessionIdentifiers(null, null);
+    setMfaVerified(false);
     setUser(null);
     setProducts([]);
     setIsLoading(false);
+    writeStoredMfaVerified(tokenToClear, false);
     localStorage.removeItem(STORAGE_KEYS.sessionToken);
     localStorage.removeItem(STORAGE_KEYS.deviceId);
-  }, [clearHeartbeat, setSessionIdentifiers]);
+  }, [clearActiveTabPulse, clearHeartbeat, setSessionIdentifiers]);
 
   const acquireApiToken = useCallback(async (): Promise<string> => {
     const account = instance.getActiveAccount() ?? instance.getAllAccounts()[0];
@@ -229,6 +345,7 @@ export const SessionProvider = ({ children }: { children: ReactNode }) => {
 
       const currentSessionToken = sessionTokenRef.current;
       const currentDeviceId = deviceIdRef.current;
+      const account = instance.getActiveAccount() ?? instance.getAllAccounts()[0] ?? undefined;
 
       if (invalidateOnServer && currentSessionToken && currentDeviceId) {
         try {
@@ -245,30 +362,38 @@ export const SessionProvider = ({ children }: { children: ReactNode }) => {
       cleanupLocalSession();
       setExplicitUserId(null);
 
-      if (triggerMsalLogout) {
-        try {
-          // Show logout message BEFORE redirect if there's a reason
-          if (reason) {
-            const message = getLogoutMessage(reason);
-            if (message) {
-              await Swal.fire({
-                title: message.title,
-                text: message.text,
-                icon: "warning",
-                confirmButtonText: "Aceptar",
-              });
-            }
-          }
-          // Use logoutRedirect instead of logoutPopup to avoid requiring user interaction
-          // This is important for automatic session invalidation (e.g., when another device logs in)
-          await instance.logoutRedirect({
-            postLogoutRedirectUri: "/login",
-            account: instance.getActiveAccount() ?? undefined,
+      if (reason) {
+        const message = getLogoutMessage(reason);
+        if (message) {
+          await Swal.fire({
+            title: message.title,
+            text: message.text,
+            icon: "warning",
+            confirmButtonText: "Aceptar",
           });
-        } catch (error) {
-          console.error("Failed to logout from MSAL", error);
         }
       }
+
+      if (triggerMsalLogout) {
+        try {
+          await instance.logoutRedirect({
+            account,
+            postLogoutRedirectUri: `${window.location.origin}/login`,
+          });
+          return;
+        } catch (error) {
+          console.error("Failed to logout from Microsoft session", error);
+        }
+      }
+
+      try {
+        await instance.clearCache({ account });
+      } catch (error) {
+        console.warn("Failed to clear MSAL cache locally", error);
+      }
+
+      sessionStorage.clear();
+      window.location.assign("/login");
     },
     [acquireApiToken, cleanupLocalSession, instance]
   );
@@ -312,7 +437,12 @@ export const SessionProvider = ({ children }: { children: ReactNode }) => {
       }
 
       // Ensure products is always an array
-      const normalizedProducts = Array.isArray(data.products) ? data.products : [];
+      const normalizedProducts = Array.isArray(data.products)
+        ? data.products.map((product) => ({
+            ...product,
+            enable: isProductActive(product),
+          }))
+        : [];
 
       setUser(data);
       setProducts(normalizedProducts);
@@ -541,16 +671,29 @@ export const SessionProvider = ({ children }: { children: ReactNode }) => {
 
       localStorage.setItem(STORAGE_KEYS.sessionToken, incomingSessionToken);
       localStorage.setItem(STORAGE_KEYS.deviceId, incomingDeviceId);
+      writeStoredMfaVerified(incomingSessionToken, false);
+      setMfaVerified(false);
 
       // Pass userId directly to refreshSessionState to avoid race condition
       await refreshSessionState(incomingSessionToken, userId ?? undefined);
 
-      // Start heartbeat after refreshSessionState completes
-      // Pass userId directly to avoid race condition with state update
-      startHeartbeat(userId ?? undefined);
+      if (userId) {
+        startActiveTabPulse(userId);
+      }
+      // Heartbeat and app navigation start only after the internal MFA challenge.
     },
-    [refreshSessionState, setSessionIdentifiers, startHeartbeat]
+    [refreshSessionState, setSessionIdentifiers, startActiveTabPulse]
   );
+
+  const completeMfaVerification = useCallback(async () => {
+    writeStoredMfaVerified(sessionTokenRef.current, true);
+    setMfaVerified(true);
+    const effectiveUserId = userIdRef.current;
+    if (!effectiveUserId) return;
+    startActiveTabPulse(effectiveUserId);
+    startHeartbeat(effectiveUserId);
+    await refreshSessionState(sessionTokenRef.current ?? undefined, effectiveUserId);
+  }, [refreshSessionState, startActiveTabPulse, startHeartbeat]);
 
   useEffect(() => {
     const storedSessionToken = localStorage.getItem(STORAGE_KEYS.sessionToken);
@@ -564,8 +707,35 @@ export const SessionProvider = ({ children }: { children: ReactNode }) => {
 
     return () => {
       clearHeartbeat();
+      clearActiveTabPulse();
     };
-  }, [clearHeartbeat, setSessionIdentifiers]);
+  }, [clearActiveTabPulse, clearHeartbeat, setSessionIdentifiers]);
+
+  useEffect(() => {
+    const handlePageHide = () => {
+      releaseActiveTabLock(tabIdRef.current);
+    };
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key !== STORAGE_KEYS.activeTab) return;
+      const currentUserId = userIdRef.current;
+      if (!currentUserId) return;
+      if (!hasConflictingActiveTab(currentUserId, tabIdRef.current)) return;
+
+      void logoutAndCleanup({
+        invalidateOnServer: false,
+        triggerMsalLogout: false,
+        reason: "Duplicate tab blocked",
+      });
+    };
+
+    window.addEventListener("pagehide", handlePageHide);
+    window.addEventListener("storage", handleStorage);
+    return () => {
+      window.removeEventListener("pagehide", handlePageHide);
+      window.removeEventListener("storage", handleStorage);
+    };
+  }, [logoutAndCleanup]);
 
   useEffect(() => {
     if (!isInitialized) {
@@ -586,9 +756,27 @@ export const SessionProvider = ({ children }: { children: ReactNode }) => {
       return;
     }
 
+    if (!mfaVerified) {
+      if (user === null) {
+        void refreshSessionState(sessionTokenRef.current);
+      }
+      setIsLoading(false);
+      return;
+    }
+
+    if (hasConflictingActiveTab(resolvedUserId, tabIdRef.current)) {
+      void logoutAndCleanup({
+        invalidateOnServer: false,
+        triggerMsalLogout: false,
+        reason: "Duplicate tab blocked",
+      });
+      return;
+    }
+
     void refreshSessionState(sessionTokenRef.current);
+    startActiveTabPulse(resolvedUserId);
     startHeartbeat();
-  }, [isInitialized, refreshSessionState, resolvedUserId, startHeartbeat]);
+  }, [isInitialized, logoutAndCleanup, mfaVerified, refreshSessionState, resolvedUserId, startActiveTabPulse, startHeartbeat]);
 
   // ---------------------------------------------------------------------------
   // POST-REDIRECT BOOTSTRAP
@@ -631,14 +819,21 @@ export const SessionProvider = ({ children }: { children: ReactNode }) => {
         });
         const accessToken = tokenResp.accessToken;
         const newDeviceId = getDeviceId();
-
-        const data = await validateSession(accessToken, {
-          access_token: accessToken,
-          device_id: newDeviceId,
-        });
-
         const oidClaim = account2.idTokenClaims?.oid as string | undefined;
         const userId = oidClaim ?? account2.localAccountId ?? null;
+
+        if (userId && hasConflictingActiveTab(userId, tabIdRef.current)) {
+          await logoutAndCleanup({
+            invalidateOnServer: false,
+            triggerMsalLogout: false,
+            reason: "Duplicate tab blocked",
+          });
+          return;
+        }
+
+        const data = await validateSession(accessToken, {
+          device_id: newDeviceId,
+        });
 
         await validateSessionOnLogin({
           sessionToken: data.session_token,
@@ -652,7 +847,7 @@ export const SessionProvider = ({ children }: { children: ReactNode }) => {
         setIsLoading(false);
       }
     })();
-  }, [isInitialized, user, instance, validateSessionOnLogin]);
+  }, [isInitialized, user, instance, logoutAndCleanup, validateSessionOnLogin]);
 
   const contextValue = useMemo<SessionContextValue>(
     () => ({
@@ -660,12 +855,14 @@ export const SessionProvider = ({ children }: { children: ReactNode }) => {
       products,
       sessionToken,
       deviceId,
+      mfaVerified,
       isLoading,
       refreshSessionState,
       validateSessionOnLogin,
+      completeMfaVerification,
       logoutAndCleanup,
     }),
-    [deviceId, isLoading, logoutAndCleanup, products, refreshSessionState, sessionToken, user, validateSessionOnLogin]
+    [completeMfaVerification, deviceId, isLoading, logoutAndCleanup, mfaVerified, products, refreshSessionState, sessionToken, user, validateSessionOnLogin]
   );
 
   return <SessionContext.Provider value={contextValue}>{children}</SessionContext.Provider>;

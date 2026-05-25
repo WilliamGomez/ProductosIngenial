@@ -6,7 +6,7 @@
 
 ## Proyecto
 
-**Votometro / Audivoto** — Plataforma de monitoreo y auditoría electoral de Ingenial AI.
+**Votometro / Audivoto** — Plataforma de monitoreo y auditoría electoral de Ingenial IA.
 - **Backend:** Azure Functions (Python v2) — Clean Architecture — `votometro-backend/`
 - **Frontend:** React 19 + TypeScript + Vite — `votometro-frontend/`
 - **Infra:** Azure AD (autenticación), Azure SQL (datos), Power BI Embedded (dashboards)

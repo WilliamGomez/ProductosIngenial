@@ -1,4 +1,4 @@
-import { LogIn, ShieldCheck, Sparkles } from "lucide-react";
+import { LogIn } from "lucide-react";
 import { loginRequest } from "../authConfig";
 import { useMsal } from "@azure/msal-react";
 import Swal from "sweetalert2";
@@ -63,7 +63,7 @@ const Login = () => {
                         <img
                             src="/logo.svg"
                             alt="Ingenial IA"
-                            className="h-10 w-10"
+                            className="h-40 w-40"
                         />
                         <div>
                             <p className="text-lg font-bold leading-none">
@@ -78,52 +78,19 @@ const Login = () => {
                     {/* Hero copy */}
                     <div className="max-w-lg">
                         <h1 className="text-5xl font-bold tracking-tight leading-[1.1]">
-                            Bienvenido a la plataforma de inteligencia política.
+                            Bienvenido a nuestra plataforma.
                         </h1>
                         <p className="mt-6 text-lg text-white/80 leading-relaxed">
-                            Votometro y Audivoto en un solo lugar — análisis,
-                            cobertura y resultados con la precisión que tu
-                            campaña necesita.
+                            Para mayor información y/o soporte contáctenos al 3104366231
                         </p>
 
                         {/* Lista de "selling points" — añade densidad sin caer
                             en walls of text. */}
-                        <ul className="mt-10 space-y-4">
-                            <li className="flex items-start gap-3">
-                                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-white/15 backdrop-blur-sm flex-shrink-0">
-                                    <ShieldCheck className="h-5 w-5" />
-                                </div>
-                                <div>
-                                    <p className="font-semibold">
-                                        Acceso seguro con Azure AD
-                                    </p>
-                                    <p className="text-sm text-white/70">
-                                        Autenticación corporativa y MFA según
-                                        la política de tu organización.
-                                    </p>
-                                </div>
-                            </li>
-                            <li className="flex items-start gap-3">
-                                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-white/15 backdrop-blur-sm flex-shrink-0">
-                                    <Sparkles className="h-5 w-5" />
-                                </div>
-                                <div>
-                                    <p className="font-semibold">
-                                        Productos con IA al instante
-                                    </p>
-                                    <p className="text-sm text-white/70">
-                                        Modelos pre-entrenados y datasets
-                                        listos para usar desde el primer
-                                        minuto.
-                                    </p>
-                                </div>
-                            </li>
-                        </ul>
                     </div>
 
                     {/* Footer copyright */}
                     <p className="text-xs text-white/60">
-                        © {new Date().getFullYear()} Ingenial AI. Todos los
+                        © {new Date().getFullYear()} Ingenial IA. Todos los
                         derechos reservados.
                     </p>
                 </div>
@@ -138,22 +105,15 @@ const Login = () => {
                     <div className="lg:hidden flex justify-center mb-8">
                         <img
                             src="/logo.svg"
-                            alt="Ingenial AI"
+                            alt="Ingenial IA"
                             className="h-12 w-12"
                         />
                     </div>
 
                     <div className="text-center lg:text-left">
-                        <p className="text-xs font-semibold uppercase tracking-wider text-brand-600">
-                            Iniciar sesión
-                        </p>
                         <h2 className="mt-2 text-3xl font-bold tracking-tight text-slate-900">
-                            Ingresa a tu cuenta
+                            Iniciar Sesión.
                         </h2>
-                        <p className="mt-2 text-sm text-slate-500">
-                            Usa tu cuenta corporativa de Microsoft 365 para
-                            acceder a la suite Ingenial AI.
-                        </p>
                     </div>
 
                     <div className="mt-10 space-y-4">
@@ -163,7 +123,7 @@ const Login = () => {
                             leftIcon={<LogIn />}
                             onClick={handleLoginRedirect}
                         >
-                            Ingresar con Microsoft
+                            Ingresar a mi cuenta.
                         </Button>
 
                         <div className="flex items-center gap-3">
@@ -187,7 +147,7 @@ const Login = () => {
 
                     <p className="mt-10 text-xs text-center text-slate-400">
                         Al continuar aceptas las políticas de uso y privacidad
-                        de Ingenial AI.
+                        de Ingenial IA.
                     </p>
                 </div>
             </div>

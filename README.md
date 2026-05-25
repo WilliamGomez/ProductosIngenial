@@ -1,6 +1,6 @@
 # Votometro — Monorepo
 
-> Plataforma de monitoreo y auditoría electoral de **Ingenial AI**.
+> Plataforma de monitoreo y auditoría electoral de **Ingenial IA**.
 > Stack: **Azure Functions (Python v2)** · **React 19 + Vite + TypeScript** · **Azure AD** · **Azure SQL** · **Power BI Embedded**.
 > **Estado:** ✅ Baseline Pre-Azure estabilizado (2026-05-15) — listo para despliegue bajo condiciones de remediación HAL-01..HAL-13.
 

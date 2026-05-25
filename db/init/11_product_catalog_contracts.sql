@@ -144,12 +144,20 @@ BEGIN TRY
 
         IF OBJECT_ID('dbo.User_Zones', 'U') IS NOT NULL
         BEGIN
-            UPDATE uz
-               SET user_product_id = pm.user_product_id
-            FROM dbo.User_Zones uz
-            INNER JOIN @ProductMap pm
-                ON pm.old_product_id = uz.product_id
-            WHERE uz.user_product_id IS NULL;
+            SELECT old_product_id, user_product_id
+            INTO #ProductMap
+            FROM @ProductMap;
+
+            EXEC sp_executesql N'
+                UPDATE uz
+                   SET user_product_id = pm.user_product_id
+                FROM dbo.User_Zones uz
+                INNER JOIN #ProductMap pm
+                    ON pm.old_product_id = uz.product_id
+                WHERE uz.user_product_id IS NULL;
+            ';
+
+            DROP TABLE #ProductMap;
         END;
 
         DECLARE @dropFk NVARCHAR(MAX) = N'';
@@ -182,14 +190,16 @@ BEGIN TRY
         END;
     END;
 
-    IF NOT EXISTS (SELECT 1 FROM dbo.Products WHERE name = N'Votometro')
-        INSERT INTO dbo.Products (name) VALUES (N'Votometro');
-    IF NOT EXISTS (SELECT 1 FROM dbo.Products WHERE name = N'Audivoto')
-        INSERT INTO dbo.Products (name) VALUES (N'Audivoto');
+    EXEC sp_executesql N'
+        IF NOT EXISTS (SELECT 1 FROM dbo.Products WHERE name = N''Votometro'')
+            INSERT INTO dbo.Products (name) VALUES (N''Votometro'');
+        IF NOT EXISTS (SELECT 1 FROM dbo.Products WHERE name = N''Audivoto'')
+            INSERT INTO dbo.Products (name) VALUES (N''Audivoto'');
 
-    UPDATE dbo.Products
-       SET name = CONCAT(N'Producto ', id)
-     WHERE name IS NULL;
+        UPDATE dbo.Products
+           SET name = CONCAT(N''Producto '', id)
+         WHERE name IS NULL;
+    ';
 
     IF EXISTS (
         SELECT 1
@@ -248,7 +258,7 @@ BEGIN TRY
           AND object_id = OBJECT_ID(N'dbo.Products')
     )
     BEGIN
-        CREATE UNIQUE INDEX UQ_Products_Name ON dbo.Products(name);
+        EXEC sp_executesql N'CREATE UNIQUE INDEX UQ_Products_Name ON dbo.Products(name);';
     END;
 
     IF OBJECT_ID('dbo.User_Products', 'U') IS NULL
@@ -329,15 +339,30 @@ BEGIN TRY
             ALTER TABLE dbo.User_Zones ALTER COLUMN product_id INT NULL;
         END;
 
+        IF COL_LENGTH('dbo.User_Zones', 'user_id') IS NOT NULL
+           AND EXISTS (
+                SELECT 1
+                FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_SCHEMA = 'dbo'
+                  AND TABLE_NAME = 'User_Zones'
+                  AND COLUMN_NAME = 'user_id'
+                  AND IS_NULLABLE = 'NO'
+           )
+        BEGIN
+            ALTER TABLE dbo.User_Zones ALTER COLUMN user_id NVARCHAR(64) NULL;
+        END;
+
         IF NOT EXISTS (
             SELECT 1 FROM sys.indexes
             WHERE name = N'IX_UZ_user_product'
               AND object_id = OBJECT_ID(N'dbo.User_Zones')
         )
         BEGIN
-            CREATE INDEX IX_UZ_user_product
-                ON dbo.User_Zones(user_product_id)
-                INCLUDE (cod_dep, cod_mun, enable);
+            EXEC sp_executesql N'
+                CREATE INDEX IX_UZ_user_product
+                    ON dbo.User_Zones(user_product_id)
+                    INCLUDE (cod_dep, cod_mun, enable);
+            ';
         END;
 
         IF NOT EXISTS (
@@ -345,11 +370,13 @@ BEGIN TRY
             WHERE name = N'FK_UZ_UserProduct'
         )
         BEGIN
-            ALTER TABLE dbo.User_Zones
-            ADD CONSTRAINT FK_UZ_UserProduct
-                FOREIGN KEY (user_product_id)
-                REFERENCES dbo.User_Products(id)
-                ON DELETE CASCADE;
+            EXEC sp_executesql N'
+                ALTER TABLE dbo.User_Zones
+                ADD CONSTRAINT FK_UZ_UserProduct
+                    FOREIGN KEY (user_product_id)
+                    REFERENCES dbo.User_Products(id)
+                    ON DELETE CASCADE;
+            ';
         END;
     END;
 
@@ -388,6 +415,13 @@ AS
 BEGIN
     SET NOCOUNT ON;
 
+    UPDATE dbo.User_Products
+    SET enable = 0,
+        updated_at = SYSUTCDATETIME()
+    WHERE enable = 1
+      AND expiration IS NOT NULL
+      AND expiration <= SYSUTCDATETIME();
+
     SELECT
         up.id AS product_id,
         p.name AS product_name,
@@ -408,6 +442,7 @@ BEGIN
     INNER JOIN dbo.Products p ON p.id = up.product_id
     WHERE up.user_id = @user_id
       AND up.enable = 1
+      AND (up.expiration IS NULL OR up.expiration > SYSUTCDATETIME())
     ORDER BY up.id DESC;
 END;
 GO
@@ -533,7 +568,10 @@ BEGIN
             i.duration_unit,
             i.expiration,
             i.amount_cop,
-            i.enable
+            CASE
+                WHEN i.expiration IS NOT NULL AND i.expiration <= SYSUTCDATETIME() THEN 0
+                ELSE i.enable
+            END AS enable
         FROM @incoming i
         INNER JOIN dbo.Products p ON p.name = i.name
     ) AS source

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from domain.models.power_bi import PowerBI
@@ -24,7 +25,32 @@ REPORT_TO_PRODUCT_MAP: Dict[str, str] = {
 DAX_ROLE_ADMIN = "Admin"
 DAX_ROLE_GEO_SCOPE = os.getenv("POWER_BI_RLS_ROLE", "GeoScope")
 POWER_BI_RLS_USERNAME_FIELD = os.getenv("POWER_BI_RLS_USERNAME_FIELD", "id")
-POWER_BI_DISABLE_RLS = os.getenv("POWER_BI_DISABLE_RLS", "1").lower() in {"1", "true", "yes"}
+POWER_BI_DISABLE_RLS = os.getenv("POWER_BI_DISABLE_RLS", "0").lower() in {"1", "true", "yes"}
+
+
+def _is_product_expired(product: Dict[str, Any]) -> bool:
+    expiration = product.get("expiration")
+    if not expiration:
+        return False
+
+    if isinstance(expiration, datetime):
+        value = expiration
+    else:
+        raw = str(expiration).strip()
+        if not raw:
+            return False
+        try:
+            value = datetime.fromisoformat(raw.replace(" ", "T").replace("Z", "+00:00"))
+        except ValueError:
+            return False
+
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value <= datetime.now(timezone.utc)
+
+
+def _is_product_enabled(product: Dict[str, Any]) -> bool:
+    return bool(product.get("enable")) and not _is_product_expired(product)
 
 
 class PowerBIUseCase:
@@ -50,7 +76,7 @@ class PowerBIUseCase:
             enabled = {
                 p["name"]
                 for p in user.get("products", [])
-                if p.get("enable")
+                if _is_product_enabled(p)
             }
             if product not in enabled:
                 raise PermissionError("Access denied: product not enabled")
@@ -71,11 +97,30 @@ class PowerBIUseCase:
             zone_count,
         )
 
-        raw_response = self.power_bi_repository.generate_embed_token_with_rls(
-            workspace_id=self.power_bi_repository.group,
-            report_id=report_id,
-            identity=identity,
-        )
+        try:
+            raw_response = self.power_bi_repository.generate_embed_token_with_rls(
+                workspace_id=self.power_bi_repository.group,
+                report_id=report_id,
+                identity=identity,
+            )
+        except RuntimeError as exc:
+            message = str(exc)
+            if identity is None or "effective identity" not in message.lower():
+                raise
+
+            logging.warning(
+                "PowerBI dataset rejected EffectiveIdentity; retrying without RLS identity. "
+                "user=%s report=%s product=%s error=%s",
+                user["id"],
+                report_id,
+                product,
+                message,
+            )
+            raw_response = self.power_bi_repository.generate_embed_token_with_rls(
+                workspace_id=self.power_bi_repository.group,
+                report_id=report_id,
+                identity=None,
+            )
 
         return {
             "accessToken": raw_response.get("accessToken"),
@@ -91,30 +136,18 @@ class PowerBIUseCase:
         user_id = user["id"]
         username = user.get(POWER_BI_RLS_USERNAME_FIELD) or user_id
 
-        # =================================================================
-        # KILL SWITCH TEMPORAL: DESACTIVACIÓN DE RLS GEOGRÁFICO
-        # Todo usuario recibe el rol de Admin en Power BI para ver todo el país.
-        # Para reactivar la seguridad, solo comenta o borra este bloque.
-        return {
-            "username": username,
-            #"roles": [DAX_ROLE_ADMIN],
-            "customData": "admin",
-            "auditableContext": user_id,
-        }, 0
-        # =================================================================
-
         # Si el usuario es Admin, no aplicamos filtro geográfico
         if user["role"] == "Admin":
             return {
                 "username": username,
-                #"roles": [DAX_ROLE_ADMIN],
+                "roles": [DAX_ROLE_ADMIN],
                 "customData": "admin",
                 "auditableContext": user_id,
             }, 0
 
         # En lugar de ir a SQL, leemos los productos y zonas que ya vinieron en el objeto user
         products = user.get("products", [])
-        target_product = next((p for p in products if p.get("name") == product_name and p.get("enable")), None)
+        target_product = next((p for p in products if p.get("name") == product_name and _is_product_enabled(p)), None)
         
         if not target_product:
             raise PermissionError(f"Access denied: product {product_name} not enabled")

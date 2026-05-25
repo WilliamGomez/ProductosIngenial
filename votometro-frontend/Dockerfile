@@ -69,6 +69,16 @@ ENV VITE_BACKEND_URL=${VITE_BACKEND_URL} \
     VITE_AZURE_TENANT_ID=${VITE_AZURE_TENANT_ID} \
     VITE_LOCAL_AUTH_BYPASS=${VITE_LOCAL_AUTH_BYPASS}
 
+RUN test -n "$VITE_BACKEND_URL" \
+    && test -n "$VITE_AZURE_CLIENT_ID" \
+    && test -n "$VITE_AZURE_TENANT_ID" \
+    || (echo "ERROR: missing required Vite build args: VITE_BACKEND_URL, VITE_AZURE_CLIENT_ID, VITE_AZURE_TENANT_ID" >&2; exit 1)
+
+RUN case "$VITE_BACKEND_URL" in \
+        /api|/api/*) ;; \
+        *) echo "ERROR: VITE_BACKEND_URL must be same-origin (/api) for Container Apps. Do not embed internal or absolute API URLs in the SPA bundle." >&2; exit 1 ;; \
+    esac
+
 # Vite build — produce /app/dist
 #RUN pnpm run build
 
@@ -103,7 +113,11 @@ RUN rm -f /etc/nginx/conf.d/default.conf \
     && apk --no-cache add tzdata
 
 # Config hardening (CSP, HSTS, headers, listen 8080).
-COPY --chown=101:101 nginx.conf /etc/nginx/conf.d/default.conf
+# Se instala como template para poder cambiar solo el upstream interno de /api
+# entre Docker local y Azure Container Apps sin recompilar codigo.
+ENV API_UPSTREAM=https://ca-votometro-api-uat.internal.whitesea-d6c244aa.eastus2.azurecontainerapps.io \
+    NGINX_ENVSUBST_FILTER=^API_UPSTREAM$
+COPY --chown=101:101 nginx.conf /etc/nginx/templates/default.conf.template
 
 # Activos estáticos del stage builder.
 COPY --from=builder --chown=101:101 /app/dist /usr/share/nginx/html

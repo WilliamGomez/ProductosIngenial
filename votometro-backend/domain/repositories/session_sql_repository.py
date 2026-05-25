@@ -13,6 +13,7 @@ class ISessionSqlRepository(ABC):
         ipaddr: str,
         is_active: bool,
         is_blocked: bool,
+        user_agent: str | None = None,
     ) -> None:
         pass
 
@@ -56,6 +57,10 @@ class ISessionSqlRepository(ABC):
 
     @abstractmethod
     def get_session_activity_detail(self, session_id: str) -> Dict:
+        pass
+
+    @abstractmethod
+    def get_session_analytics(self, days: int = 30) -> Dict:
         pass
 
     @abstractmethod

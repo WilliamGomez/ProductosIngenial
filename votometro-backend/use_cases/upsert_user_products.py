@@ -8,9 +8,12 @@ Cambios 2026-05-10:
 """
 from typing import Dict, List, Optional
 import logging
+from datetime import datetime
+from pytz import timezone
 
 from domain.models.product import Product, UserZone
 from app.sql.user_products_sql_adapter import UserProductsSqlAdapter
+from shared.utils import calculate_expiration
 
 
 logger = logging.getLogger(__name__)
@@ -92,6 +95,8 @@ class UpdateUserProductsUseCase:
                 name=product_dict["name"],
                 contract_duration=int(product_dict["contract_duration"]),
                 duration_unit=product_dict["duration_unit"],
+                expiration=product_dict.get("expiration")
+                or calculate_expiration(product_dict, datetime.now(timezone("America/Bogota"))),
                 enable=product_dict.get("enable", True),
                 amount_cop=float(product_dict.get("amount_cop", 0)),
                 zones=zones,

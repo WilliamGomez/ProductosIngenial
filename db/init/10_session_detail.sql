@@ -24,6 +24,9 @@ AS
 BEGIN
     SET NOCOUNT ON;
 
+    IF OBJECT_ID(N'dbo.ExpireIdleUserSessions', N'P') IS NOT NULL
+        EXEC dbo.ExpireIdleUserSessions @IdleTimeoutSeconds = 7200;
+
     SELECT
         us.session_id,
         u.user_id,
@@ -56,6 +59,9 @@ AS
 BEGIN
     SET NOCOUNT ON;
 
+    IF OBJECT_ID(N'dbo.ExpireIdleUserSessions', N'P') IS NOT NULL
+        EXEC dbo.ExpireIdleUserSessions @IdleTimeoutSeconds = 7200;
+
     SELECT
         us.session_id,
         u.user_id,
@@ -79,13 +85,14 @@ BEGIN
     WHERE us.session_id = @SessionId;
 
     SELECT
-        l.log_id,
+        MIN(l.log_id) AS log_id,
         l.page_route,
-        l.time_spent_seconds,
-        l.created_at
+        SUM(l.time_spent_seconds) AS time_spent_seconds,
+        MIN(l.created_at) AS created_at
     FROM dbo.Session_Navigation_Logs l
     WHERE l.session_id = @SessionId
-    ORDER BY l.created_at ASC, l.log_id ASC;
+    GROUP BY l.page_route
+    ORDER BY SUM(l.time_spent_seconds) DESC, MIN(l.created_at) ASC;
 END;
 GO
 

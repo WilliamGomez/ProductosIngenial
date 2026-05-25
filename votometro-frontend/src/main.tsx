@@ -4,7 +4,22 @@ import type { EventMessage, AuthenticationResult } from "@azure/msal-browser";
 
 import App from "./App.tsx";
 import "./index.css";
-import { msalConfig } from "./authConfig.ts";
+import { authConfigError, msalConfig } from "./authConfig.ts";
+
+const rootElement = document.getElementById("root") as HTMLElement;
+
+if (authConfigError) {
+  rootElement.innerHTML = `
+    <main style="min-height:100vh;display:grid;place-items:center;background:#f8fafc;color:#0f172a;font-family:Inter,system-ui,sans-serif;padding:24px;">
+      <section style="max-width:560px;border:1px solid #fecaca;background:#fff;border-radius:12px;padding:24px;box-shadow:0 20px 45px rgba(15,23,42,.08);">
+        <p style="margin:0 0 8px;color:#b91c1c;font-weight:700;">Configuración de autenticación incompleta</p>
+        <h1 style="margin:0 0 12px;font-size:24px;line-height:1.2;">No se puede iniciar sesión con Microsoft.</h1>
+        <p style="margin:0;color:#475569;line-height:1.5;">${authConfigError}. Reconstruye la imagen del frontend con los build args VITE_AZURE_CLIENT_ID, VITE_AZURE_TENANT_ID y VITE_BACKEND_URL.</p>
+      </section>
+    </main>
+  `;
+  throw new Error(authConfigError);
+}
 
 export const msalInstance = new PublicClientApplication(msalConfig);
 
@@ -57,7 +72,7 @@ msalInstance
       }
     });
 
-    const root = createRoot(document.getElementById("root") as HTMLElement);
+    const root = createRoot(rootElement);
     root.render(<App pca={msalInstance} />);
   })
   .catch((err) => {
@@ -66,6 +81,6 @@ msalInstance
     // el usuario tenga oportunidad de re-iniciar el flow.
     // eslint-disable-next-line no-console
     console.error("[main] MSAL bootstrap failed:", err);
-    const root = createRoot(document.getElementById("root") as HTMLElement);
+    const root = createRoot(rootElement);
     root.render(<App pca={msalInstance} />);
   });

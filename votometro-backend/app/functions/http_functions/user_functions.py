@@ -20,7 +20,7 @@ import json
 
 from http import HTTPStatus
 from domain.models.user import User
-from shared.utils import MIMETYPE
+from shared.utils import MIMETYPE, decode_token, json_response
 
 from app.sql.user_sql_adapter import UserSqlAdapter
 from app.sql.user_zones_sql_adapter import UserZonesSqlAdapter
@@ -36,12 +36,59 @@ from use_cases.upsert_user_products import UpdateUserProductsUseCase
 users_bp = func.Blueprint()
 
 
+def _json_response(payload, status=HTTPStatus.OK):
+    return json_response(payload, status_code=int(status))
+
+
+def _caller_from_request(req: func.HttpRequest) -> dict:
+    auth_header = req.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise PermissionError("Authorization header is required")
+
+    claims = decode_token(auth_header.split(" ", 1)[1].strip())
+    caller_id = claims.get("oid")
+    if not caller_id:
+        raise PermissionError("Invalid token: user ID not found")
+
+    caller = UserSqlAdapter().get_user(caller_id)
+    if not caller:
+        raise PermissionError("Caller user not found")
+    return caller
+
+
+def _require_admin(req: func.HttpRequest) -> dict:
+    caller = _caller_from_request(req)
+    if caller.get("role") != "Admin":
+        raise PermissionError("Admin role required")
+    return caller
+
+
+def _require_self_or_admin(req: func.HttpRequest, target_user_id: str | None) -> dict:
+    caller = _caller_from_request(req)
+    if not target_user_id:
+        raise ValueError("user_id is required")
+    if caller.get("role") == "Admin" or caller.get("id") == target_user_id:
+        return caller
+    raise PermissionError("Access denied")
+
+
+def _auth_error(error: PermissionError) -> func.HttpResponse:
+    message = str(error)
+    status = HTTPStatus.UNAUTHORIZED if "Authorization" in message or "token" in message.lower() else HTTPStatus.FORBIDDEN
+    return _json_response({"error": message}, status)
+
+
 # ---------------------------------------------------------------------------
 # POST /api/user — crear usuario (acepta `zones` opcional)
 # ---------------------------------------------------------------------------
 @users_bp.function_name(name="CreateUser")
 @users_bp.route(route="user", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
 def create_user(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        _require_admin(req)
+    except PermissionError as error:
+        return _auth_error(error)
+
     try:
         data = req.get_json()
     except ValueError:
@@ -69,12 +116,8 @@ def create_user(req: func.HttpRequest) -> func.HttpResponse:
             mimetype=MIMETYPE,
         )
     except Exception as error:
-        logging.error(f"CreateUser: {error}")
-        return func.HttpResponse(
-            json.dumps(dict(error=str(error))),
-            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
-            mimetype=MIMETYPE,
-        )
+        logging.exception("CreateUser failed")
+        return _json_response({"error": "Create user failed"}, HTTPStatus.INTERNAL_SERVER_ERROR)
 
 
 # ---------------------------------------------------------------------------
@@ -84,6 +127,7 @@ def create_user(req: func.HttpRequest) -> func.HttpResponse:
 @users_bp.route(route="user", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
 def list_users(req: func.HttpRequest) -> func.HttpResponse:
     try:
+        _require_admin(req)
         sql_repo = UserSqlAdapter()
         use_case = ListUsersUseCase(sql_repo)
         users = use_case.execute()
@@ -93,13 +137,11 @@ def list_users(req: func.HttpRequest) -> func.HttpResponse:
             status_code=HTTPStatus.OK,
             mimetype=MIMETYPE,
         )
+    except PermissionError as error:
+        return _auth_error(error)
     except Exception as error:
-        logging.error(f"ListUsers: {error}")
-        return func.HttpResponse(
-            json.dumps(dict(error=str(error))),
-            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
-            mimetype=MIMETYPE,
-        )
+        logging.exception("ListUsers failed")
+        return _json_response({"error": "List users failed"}, HTTPStatus.INTERNAL_SERVER_ERROR)
 
 
 # ---------------------------------------------------------------------------
@@ -112,6 +154,7 @@ def list_users(req: func.HttpRequest) -> func.HttpResponse:
 def get_user(req: func.HttpRequest) -> func.HttpResponse:
     try:
         user_id = req.route_params.get("user_id")
+        _require_self_or_admin(req, user_id)
         sql_repo = UserSqlAdapter()
         zones_repo = UserZonesSqlAdapter()
         use_case = GetUserUseCase(sql_repo, zones_repo)
@@ -129,13 +172,13 @@ def get_user(req: func.HttpRequest) -> func.HttpResponse:
             status_code=HTTPStatus.OK,
             mimetype=MIMETYPE,
         )
+    except PermissionError as error:
+        return _auth_error(error)
+    except ValueError as error:
+        return _json_response({"error": str(error)}, HTTPStatus.BAD_REQUEST)
     except Exception as error:
-        logging.error(f"GetUser: {error}")
-        return func.HttpResponse(
-            json.dumps(dict(error=str(error))),
-            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
-            mimetype=MIMETYPE,
-        )
+        logging.exception("GetUser failed")
+        return _json_response({"error": "Get user failed"}, HTTPStatus.INTERNAL_SERVER_ERROR)
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +189,12 @@ def get_user(req: func.HttpRequest) -> func.HttpResponse:
     route="user/{user_id}", methods=["PUT"], auth_level=func.AuthLevel.ANONYMOUS
 )
 def update_user(req: func.HttpRequest) -> func.HttpResponse:
+    user_id = req.route_params.get("user_id")
+    try:
+        _require_admin(req)
+    except PermissionError as error:
+        return _auth_error(error)
+
     try:
         data = req.get_json()
     except ValueError:
@@ -155,7 +204,6 @@ def update_user(req: func.HttpRequest) -> func.HttpResponse:
             mimetype=MIMETYPE,
         )
     try:
-        user_id = req.route_params.get("user_id")
         user = User(
             id=user_id,
             email=data.get("email"),
@@ -193,12 +241,48 @@ def update_user(req: func.HttpRequest) -> func.HttpResponse:
             mimetype=MIMETYPE,
         )
     except Exception as error:
-        logging.error(f"UpdateUser: {error}")
-        return func.HttpResponse(
-            json.dumps(dict(error=str(error))),
-            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
-            mimetype=MIMETYPE,
+        logging.exception("UpdateUser failed")
+        return _json_response({"error": "Update user failed"}, HTTPStatus.INTERNAL_SERVER_ERROR)
+
+
+# ---------------------------------------------------------------------------
+# DELETE /api/user/{user_id} — eliminar usuario completo
+# ---------------------------------------------------------------------------
+@users_bp.function_name(name="DeleteUser")
+@users_bp.route(
+    route="user/{user_id}", methods=["DELETE"], auth_level=func.AuthLevel.ANONYMOUS
+)
+def delete_user(req: func.HttpRequest) -> func.HttpResponse:
+    user_id = req.route_params.get("user_id")
+    try:
+        caller = _require_admin(req)
+    except PermissionError as error:
+        return _auth_error(error)
+
+    if not user_id:
+        return _json_response({"error": "user_id is required"}, HTTPStatus.BAD_REQUEST)
+    if caller.get("id") == user_id:
+        return _json_response(
+            {"error": "No puedes eliminar tu propio usuario activo."},
+            HTTPStatus.BAD_REQUEST,
         )
+
+    try:
+        try:
+            UserGraphAdapter().delete_user(user_id)
+        except Exception:
+            logging.warning(
+                "DeleteUser: Graph delete failed for user_id=%s; continuing with local deletion",
+                user_id,
+                exc_info=True,
+            )
+        UserSqlAdapter().delete_user(user_id)
+        return func.HttpResponse(status_code=HTTPStatus.NO_CONTENT, mimetype=MIMETYPE)
+    except LookupError:
+        return _json_response({"error": "User not found"}, HTTPStatus.NOT_FOUND)
+    except Exception:
+        logging.exception("DeleteUser failed")
+        return _json_response({"error": "Delete user failed"}, HTTPStatus.INTERNAL_SERVER_ERROR)
 
 
 # ---------------------------------------------------------------------------
@@ -214,6 +298,12 @@ def upsert_user_zones(req: func.HttpRequest) -> func.HttpResponse:
     """Reemplaza las asignaciones geográficas del usuario sin tocar el resto
     de su perfil. Body: `{"zones": [{"cod_dep": "05"}, {"cod_dep": "11",
     "cod_mun": "001"}]}` o directamente la lista."""
+    user_id = req.route_params.get("user_id")
+    try:
+        _require_admin(req)
+    except PermissionError as error:
+        return _auth_error(error)
+
     try:
         data = req.get_json()
     except ValueError:
@@ -223,7 +313,6 @@ def upsert_user_zones(req: func.HttpRequest) -> func.HttpResponse:
             mimetype=MIMETYPE,
         )
     try:
-        user_id = req.route_params.get("user_id")
         # Aceptamos dos formatos: {"zones": [...]} o [...] directo
         if isinstance(data, dict):
             zones = data.get("zones", [])
@@ -245,12 +334,8 @@ def upsert_user_zones(req: func.HttpRequest) -> func.HttpResponse:
             mimetype=MIMETYPE,
         )
     except Exception as error:
-        logging.error(f"UpsertUserZones: {error}")
-        return func.HttpResponse(
-            json.dumps(dict(error=str(error))),
-            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
-            mimetype=MIMETYPE,
-        )
+        logging.exception("UpsertUserZones failed")
+        return _json_response({"error": "Update zones failed"}, HTTPStatus.INTERNAL_SERVER_ERROR)
 
 
 # ---------------------------------------------------------------------------
@@ -282,6 +367,12 @@ def upsert_user_products(req: func.HttpRequest) -> func.HttpResponse:
       }
     ]
     """
+    user_id = req.route_params.get("user_id")
+    try:
+        _require_admin(req)
+    except PermissionError as error:
+        return _auth_error(error)
+
     try:
         data = req.get_json()
     except ValueError:
@@ -291,8 +382,6 @@ def upsert_user_products(req: func.HttpRequest) -> func.HttpResponse:
             mimetype=MIMETYPE,
         )
     try:
-        user_id = req.route_params.get("user_id")
-
         # Esperar array de productos o dict con key 'products'
         products = data if isinstance(data, list) else data.get("products", [])
 
@@ -311,9 +400,5 @@ def upsert_user_products(req: func.HttpRequest) -> func.HttpResponse:
             mimetype=MIMETYPE,
         )
     except Exception as error:
-        logging.exception(f"UpsertUserProducts: {error}")
-        return func.HttpResponse(
-            json.dumps(dict(error=str(error))),
-            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
-            mimetype=MIMETYPE,
-        )
+        logging.exception("UpsertUserProducts failed")
+        return _json_response({"error": "Update products failed"}, HTTPStatus.INTERNAL_SERVER_ERROR)
