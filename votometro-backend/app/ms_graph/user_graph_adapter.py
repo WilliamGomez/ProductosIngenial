@@ -1,10 +1,12 @@
 import requests
 import os
+import logging
 from domain.models.user import User
 from domain.repositories.user_repository import IUserRepository
 from shared.msal_auth import get_access_token
 
 GRAPH_URL = "https://graph.microsoft.com/v1.0"
+logger = logging.getLogger(__name__)
 
 
 class UserGraphAdapter(IUserRepository):
@@ -90,14 +92,44 @@ class UserGraphAdapter(IUserRepository):
     def update_user(self, user: User) -> User:
         body = {
             "displayName": user.display_name,
-            "accountEnabled": user.enable, 
-            "mailNickname": user.email.split("@")[0],
-            "userPrincipalName": user.email,
+            "accountEnabled": user.enable,
             "mobilePhone": user.phone,
         }
+        body = {key: value for key, value in body.items() if value is not None}
 
         graph_url = f"{GRAPH_URL}/users/{user.id}"
         res = requests.patch(graph_url, headers=self._headers(), json=body)
+        if res.status_code == 400:
+            message = res.json().get("error", {}).get("message", "Bad request")
+            raise ValueError(f"Error: {message}")
+        res.raise_for_status()
+
+    def reset_password(self, user_id: str, new_password: str, force_change_next_signin: bool = True) -> None:
+        body = {
+            "passwordProfile": {
+                "forceChangePasswordNextSignIn": force_change_next_signin,
+                "password": new_password,
+            }
+        }
+        graph_url = f"{GRAPH_URL}/users/{user_id}"
+        res = requests.patch(graph_url, headers=self._headers(), json=body)
+        if res.status_code >= 400:
+            try:
+                payload = res.json()
+            except ValueError:
+                payload = {}
+            error = payload.get("error", {}) if isinstance(payload, dict) else {}
+            message = error.get("message") or res.text or "Graph password reset failed"
+            code = error.get("code") or str(res.status_code)
+            logger.warning(
+                "Graph reset_password failed user_id=%s status=%s code=%s message=%s",
+                user_id,
+                res.status_code,
+                code,
+                message,
+            )
+            if res.status_code in (400, 403, 404):
+                raise ValueError(f"Microsoft Graph rechazo el cambio de contrasena ({code}): {message}")
         res.raise_for_status()
 
     def delete_user(self, user_id: str) -> None:

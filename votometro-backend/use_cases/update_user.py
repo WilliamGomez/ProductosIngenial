@@ -8,6 +8,7 @@ Refactor 2026-05-09:
   · El parámetro `zones` se pasa por separado al método `execute`, no se
     embebe en el modelo `User` para mantener la entidad limpia.
 """
+import logging
 from typing import Dict, List, Optional
 
 from domain.models.user import User
@@ -35,12 +36,26 @@ class UpdateUserUseCase:
         current_user = self.sql_repo.get_user(user.id)
 
         if current_user["role"] != user.role:
-            assignments = self.graph_repo.get_user_app_role_assignments(user.id)
-            for assignment in assignments:
-                self.graph_repo.remove_user_from_app_role(user.id, assignment["id"])
-            self.graph_repo.assign_user_to_service_principal(user.id, user.role)
+            try:
+                assignments = self.graph_repo.get_user_app_role_assignments(user.id)
+                for assignment in assignments:
+                    self.graph_repo.remove_user_from_app_role(user.id, assignment["id"])
+                self.graph_repo.assign_user_to_service_principal(user.id, user.role)
+            except Exception:
+                logging.warning(
+                    "UpdateUserUseCase: Graph role update failed for user_id=%s; SQL update will continue",
+                    user.id,
+                    exc_info=True,
+                )
 
-        self.graph_repo.update_user(user)
+        try:
+            self.graph_repo.update_user(user)
+        except Exception:
+            logging.warning(
+                "UpdateUserUseCase: Graph profile update failed for user_id=%s; SQL update will continue",
+                user.id,
+                exc_info=True,
+            )
         self.sql_repo.update_user(user)
 
         # Persistir zonas geográficas si vienen Y hay repo inyectado.

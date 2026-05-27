@@ -35,6 +35,8 @@ $Cae = "cae-votometro-uat"
 $Mi = "id-votometro-uat"
 $ApiApp = "ca-votometro-api-uat"
 $WebApp = "ca-votometro-web-uat"
+$FrontDoorId = "8871aa16-7b26-4221-aa83-011466dc3e65"
+$PublicWebUrl = "https://plataformas.ingenial-ia.com"
 $SqlCmdOid = "__NONE__"
 $SqlCmdEmail = "__NONE__"
 $script:LastSqlConnectivityError = ""
@@ -681,7 +683,8 @@ New-Item -ItemType Directory -Force -Path $SqlTmp | Out-Null
 
 $CleanSqlScripts = @(
     "12_uat_schema_seed.sql",
-    "14_mfa_totp.sql"
+    "14_mfa_totp.sql",
+    "15_product_report_catalog.sql"
 )
 $DbInitDataScripts = @(
     "01_base_schema.sql",
@@ -696,10 +699,12 @@ $DbInitDataScripts = @(
     "10_session_detail.sql",
     "11_product_catalog_contracts.sql",
     "13_session_analytics.sql",
-    "14_mfa_totp.sql"
+    "14_mfa_totp.sql",
+    "15_product_report_catalog.sql"
 )
 $AlwaysSqlPatchScripts = @(
-    "14_mfa_totp.sql"
+    "14_mfa_totp.sql",
+    "15_product_report_catalog.sql"
 )
 
 if ($SqlInitMode -eq "DbInitData") {
@@ -971,14 +976,18 @@ properties:
         env:
           - name: API_UPSTREAM
             value: $ApiUpstream
+          - name: FRONTDOOR_ID
+            value: $FrontDoorId
+          - name: REQUIRE_FRONTDOOR
+            value: "true"
         probes:
           - type: Liveness
             httpGet:
-              path: /
+              path: /origin-health
               port: 8080
           - type: Readiness
             httpGet:
-              path: /
+              path: /origin-health
               port: 8080
         resources:
           cpu: 0.5
@@ -1012,13 +1021,13 @@ if ([string]::IsNullOrWhiteSpace($WebFqdn)) {
     throw "Web FQDN not found."
 }
 Write-Output "[deploy-uat][fase 8/8] smoke tests..."
-$null = Invoke-UatSmoke "https://$WebFqdn/" "frontend-home"
-$HealthSmoke = Invoke-UatSmoke "https://$WebFqdn/api/health" "backend-health"
+$null = Invoke-UatSmoke "$PublicWebUrl/" "frontend-home-frontdoor"
+$HealthSmoke = Invoke-UatSmoke "$PublicWebUrl/api/health" "backend-health-frontdoor"
 Assert-JsonSmoke $HealthSmoke "backend-health"
 if ($HealthSmoke.Content -notmatch "votometro-backend") {
     throw "[deploy-uat] /api/health no parece provenir del backend real. Body=$($HealthSmoke.Content)"
 }
-$ReadySmoke = Invoke-UatSmoke "https://$WebFqdn/api/health/ready" "backend-ready"
+$ReadySmoke = Invoke-UatSmoke "$PublicWebUrl/api/health/ready" "backend-ready-frontdoor"
 Assert-JsonSmoke $ReadySmoke "backend-ready"
 if ($ReadySmoke.Content -notmatch '"status"\s*:\s*"ready"') {
     throw "[deploy-uat] /api/health/ready no reporto estado ready. Body=$($ReadySmoke.Content)"
@@ -1027,7 +1036,7 @@ if ($ReadySmoke.Content -notmatch '"status"\s*:\s*"ready"') {
 if ($env:UAT_SMOKE_ACCESS_TOKEN -and $env:UAT_SMOKE_SESSION_TOKEN) {
     Invoke-WebRequest `
         -UseBasicParsing `
-        -Uri "https://$WebFqdn/api/power-bi/9db4c8ee-d117-4a2e-9a72-9284c6208fa0" `
+        -Uri "$PublicWebUrl/api/power-bi/9db4c8ee-d117-4a2e-9a72-9284c6208fa0" `
         -Headers @{
             Authorization = "Bearer $($env:UAT_SMOKE_ACCESS_TOKEN)"
             "X-Session-Token" = $env:UAT_SMOKE_SESSION_TOKEN

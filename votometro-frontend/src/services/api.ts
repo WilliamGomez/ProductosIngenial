@@ -1,23 +1,50 @@
+import axios from "axios";
+
 /**
  * Interface para un Producto contratado por un Usuario.
  * ACTUALIZADO 2026-05-10: Ahora incluye `zones` array directamente.
  */
 export interface IProduct {
-  id?: number | null;  // null es válido para productos nuevos
-  name: string;              // "Votometro" | "Audivoto"
+  id?: number | null; // null es válido para productos nuevos
+  name: string; // "Votometro" | "Audivoto"
   contract_duration: number;
-  duration_unit: string;     // "years" | "months" | "days" | "hours"
+  duration_unit: string; // "years" | "months" | "days" | "hours"
   enable: boolean;
   amount_cop?: number;
-  zones: IUserZone[];        // NUEVO: Zonas anidadas, NO CSV strings
+  zones: IUserZone[]; // NUEVO: Zonas anidadas, NO CSV strings
   expiration?: string;
   created_at?: string;
+  display_name?: string | null;
+  route_path?: string | null;
+  powerbi_report_id?: string | null;
+  powerbi_workspace_id?: string | null;
+  powerbi_tenant_id?: string | null;
+  icon?: string | null;
+  display_order?: number;
+  is_report_enabled?: boolean;
+  description?: string | null;
+}
+
+export interface IProductReportCatalogItem {
+  id?: number | null;
+  name: string;
+  display_name: string;
+  route_path: string;
+  powerbi_report_id: string;
+  powerbi_workspace_id?: string | null;
+  powerbi_tenant_id?: string | null;
+  icon?: string | null;
+  display_order: number;
+  is_report_enabled: boolean;
+  description?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
 }
 
 /**
  * Interfaz mejorada para updateUserproducts.
  * Ahora espera productos CON sus zonas anidadas.
- */import axios from "axios";
+ */
 import type { ISessionResponse } from "../interfaces/ISessionResponse";
 import type { IEmbedConfig } from "../interfaces/IEmbedConfig";
 import type { IUser } from "../interfaces/IUser";
@@ -48,11 +75,15 @@ import type { ISessionAnalytics } from "../interfaces/ISessionInfo";
 const apiBaseURL = (import.meta.env.VITE_BACKEND_URL ?? "").trim();
 
 if (!apiBaseURL) {
-  throw new Error("[api] Missing VITE_BACKEND_URL. Expected same-origin '/api'.");
+  throw new Error(
+    "[api] Missing VITE_BACKEND_URL. Expected same-origin '/api'.",
+  );
 }
 
 if (!import.meta.env.DEV && /^https?:\/\//i.test(apiBaseURL)) {
-  throw new Error("[api] Invalid VITE_BACKEND_URL for production. Expected same-origin '/api', not an absolute URL.");
+  throw new Error(
+    "[api] Invalid VITE_BACKEND_URL for production. Expected same-origin '/api', not an absolute URL.",
+  );
 }
 
 // eslint-disable-next-line no-console
@@ -67,9 +98,16 @@ const api = axios.create({
 // Nota: la firma quedó simplificada — el caller pasa el `sessionId` y aquí
 // armamos el body `{ session_id }` esperado por el backend. Esto evita que
 // cada vista tenga que recordar la forma exacta del payload.
-export const invalidateSession = async (token: string, sessionId: string): Promise<void> => {
+export const invalidateSession = async (
+  token: string,
+  sessionId: string,
+): Promise<void> => {
   return api
-    .post("/invalidate-session", { session_id: sessionId }, { headers: { Authorization: `Bearer ${token}` } })
+    .post(
+      "/invalidate-session",
+      { session_id: sessionId },
+      { headers: { Authorization: `Bearer ${token}` } },
+    )
     .then(function (response) {
       return response.data;
     })
@@ -78,9 +116,16 @@ export const invalidateSession = async (token: string, sessionId: string): Promi
     });
 };
 
-export const revokeUserSession = async (token: string, sessionId: string): Promise<void> => {
+export const revokeUserSession = async (
+  token: string,
+  sessionId: string,
+): Promise<void> => {
   return api
-    .post("/manage/sessions/revoke", { session_id: sessionId }, { headers: { Authorization: `Bearer ${token}` } })
+    .post(
+      "/manage/sessions/revoke",
+      { session_id: sessionId },
+      { headers: { Authorization: `Bearer ${token}` } },
+    )
     .then(function (response) {
       return response.data;
     })
@@ -89,9 +134,14 @@ export const revokeUserSession = async (token: string, sessionId: string): Promi
     });
 };
 
-export const validateSession = async (token: string, data: object): Promise<ISessionResponse> => {
+export const validateSession = async (
+  token: string,
+  data: object,
+): Promise<ISessionResponse> => {
   return api
-    .post<ISessionResponse>("/session", data, { headers: { Authorization: `Bearer ${token}` } })
+    .post<ISessionResponse>("/session", data, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
     .then(function (response) {
       return response.data;
     })
@@ -105,10 +155,10 @@ export const forceLogoutAll = async (token: string): Promise<void> => {
     .post<void>(
       "/session/force-logout-all",
       {},
-      { headers: { Authorization: `Bearer ${token}` } }
+      { headers: { Authorization: `Bearer ${token}` } },
     )
-    .then(response => response.data)
-    .catch(error => Promise.reject(error));
+    .then((response) => response.data)
+    .catch((error) => Promise.reject(error));
 };
 
 export interface IMfaStatus {
@@ -118,7 +168,13 @@ export interface IMfaStatus {
   mfa_enabled: boolean;
   mfa_enrolled_at?: string | null;
   has_secret: boolean;
-  session_status?: "MFA_Pending" | "Active" | "Closed" | "Expired_Idle" | "Revoked_by_Admin" | null;
+  session_status?:
+    | "MFA_Pending"
+    | "Active"
+    | "Closed"
+    | "Expired_Idle"
+    | "Revoked_by_Admin"
+    | null;
   mfa_verified: boolean;
   mfa_required: boolean;
 }
@@ -132,7 +188,7 @@ export interface IMfaSetupStart {
 
 export const getMfaStatus = async (
   token: string,
-  sessionToken?: string | null
+  sessionToken?: string | null,
 ): Promise<IMfaStatus> => {
   return api
     .get<IMfaStatus>("/mfa/status", {
@@ -147,20 +203,29 @@ export const getMfaStatus = async (
 
 export const startMfaSetup = async (token: string): Promise<IMfaSetupStart> => {
   return api
-    .post<IMfaSetupStart>("/mfa/setup/start", {}, { headers: { Authorization: `Bearer ${token}` } })
+    .post<IMfaSetupStart>(
+      "/mfa/setup/start",
+      {},
+      { headers: { Authorization: `Bearer ${token}` } },
+    )
     .then((response) => response.data);
 };
 
 export const verifyMfaSetup = async (
   token: string,
   sessionToken: string,
-  code: string
+  code: string,
 ): Promise<IMfaStatus> => {
   return api
     .post<IMfaStatus>(
       "/mfa/setup/verify",
       { session_token: sessionToken, code },
-      { headers: { Authorization: `Bearer ${token}`, "X-Session-Token": sessionToken } }
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "X-Session-Token": sessionToken,
+        },
+      },
     )
     .then((response) => response.data);
 };
@@ -168,20 +233,32 @@ export const verifyMfaSetup = async (
 export const verifyMfaChallenge = async (
   token: string,
   sessionToken: string,
-  code: string
+  code: string,
 ): Promise<IMfaStatus> => {
   return api
     .post<IMfaStatus>(
       "/mfa/challenge/verify",
       { session_token: sessionToken, code },
-      { headers: { Authorization: `Bearer ${token}`, "X-Session-Token": sessionToken } }
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "X-Session-Token": sessionToken,
+        },
+      },
     )
     .then((response) => response.data);
 };
 
-export const resetUserMfa = async (token: string, userId: string): Promise<void> => {
+export const resetUserMfa = async (
+  token: string,
+  userId: string,
+): Promise<void> => {
   return api
-    .post<void>(`/admin/users/${userId}/mfa/reset`, {}, { headers: { Authorization: `Bearer ${token}` } })
+    .post<void>(
+      `/admin/users/${userId}/mfa/reset`,
+      {},
+      { headers: { Authorization: `Bearer ${token}` } },
+    )
     .then((response) => response.data);
 };
 
@@ -193,7 +270,7 @@ export const resetUserMfa = async (token: string, userId: string): Promise<void>
 export const getPowerBiReport = async (
   token: string,
   reportId: string,
-  sessionToken?: string | null
+  sessionToken?: string | null,
 ): Promise<IEmbedConfig> => {
   return api
     .get<IEmbedConfig>(`/power-bi/${reportId}`, {
@@ -210,14 +287,42 @@ export const getPowerBiReport = async (
     });
 };
 
-export const getUser = async (token: string, userId: string | undefined): Promise<IUser> => {
+export const getProductReportCatalog = async (
+  token: string,
+  includeDisabled = true,
+): Promise<IProductReportCatalogItem[]> => {
   return api
-    .get<IUser>(`/user/${userId}`, { headers: { Authorization: `Bearer ${token}` } })
+    .get<IProductReportCatalogItem[]>("/products/catalog", {
+      headers: { Authorization: `Bearer ${token}` },
+      params: { include_disabled: includeDisabled ? 1 : 0 },
+    })
+    .then((response) => response.data);
+};
+
+export const upsertProductReportCatalog = async (
+  token: string,
+  data: IProductReportCatalogItem,
+): Promise<IProductReportCatalogItem> => {
+  return api
+    .post<IProductReportCatalogItem>("/products/catalog", data, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    .then((response) => response.data);
+};
+
+export const getUser = async (
+  token: string,
+  userId: string | undefined,
+): Promise<IUser> => {
+  return api
+    .get<IUser>(`/user/${userId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
     .then(function (response) {
       return response.data;
     })
     .catch(function (error) {
-      console.error('[api.getUser] Request failed:', error);
+      console.error("[api.getUser] Request failed:", error);
       return Promise.reject(error);
     });
 };
@@ -235,7 +340,9 @@ export const getUsers = async (token: string): Promise<IUser[]> => {
 
 export const getCountries = async (token: string): Promise<ICountry[]> => {
   try {
-    const response = await api.get<ICountry[]>(`/countries`, { headers: { Authorization: `Bearer ${token}` } });
+    const response = await api.get<ICountry[]>(`/countries`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
     return response.data;
   } catch (error) {
     return await Promise.reject(error);
@@ -244,25 +351,37 @@ export const getCountries = async (token: string): Promise<ICountry[]> => {
 
 export const getDepartments = async (token: string): Promise<IDepartment[]> => {
   try {
-    const response = await api.get<IDepartment[]>(`/departments`, { headers: { Authorization: `Bearer ${token}` } });
+    const response = await api.get<IDepartment[]>(`/departments`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
     return response.data;
   } catch (error) {
     return await Promise.reject(error);
   }
 };
 
-export const getMunicipalities = async (token: string): Promise<IMunicipio[]> => {
+export const getMunicipalities = async (
+  token: string,
+): Promise<IMunicipio[]> => {
   try {
-    const response = await api.get<IMunicipio[]>(`/municipality`, { headers: { Authorization: `Bearer ${token}` } });
+    const response = await api.get<IMunicipio[]>(`/municipality`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
     return response.data;
   } catch (error) {
     return await Promise.reject(error);
   }
 };
 
-export const updateUserInfo = async (token: string, userId: string, data: object): Promise<void> => {
+export const updateUserInfo = async (
+  token: string,
+  userId: string,
+  data: object,
+): Promise<void> => {
   return api
-    .put<void>(`/user/${userId}`, data, { headers: { Authorization: `Bearer ${token}` } })
+    .put<void>(`/user/${userId}`, data, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
     .then(function (response) {
       return response.data;
     })
@@ -271,10 +390,14 @@ export const updateUserInfo = async (token: string, userId: string, data: object
     });
 };
 
-export const updateUserproducts = async (token: string, userId: string, products: IProduct[]): Promise<void> => {
+export const updateUserproducts = async (
+  token: string,
+  userId: string,
+  products: IProduct[],
+): Promise<void> => {
   /**
    * Envía productos CON sus zonas geográficas anidadas.
-   * 
+   *
    * Payload esperado:
    * [
    *   {
@@ -292,7 +415,9 @@ export const updateUserproducts = async (token: string, userId: string, products
    * ]
    */
   return api
-    .put<void>(`/user-products/${userId}`, products, { headers: { Authorization: `Bearer ${token}` } })
+    .put<void>(`/user-products/${userId}`, products, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
     .then(function (response) {
       return response.data;
     })
@@ -301,9 +426,14 @@ export const updateUserproducts = async (token: string, userId: string, products
     });
 };
 
-export const createUser = async (token: string, data: object): Promise<ISessionResponse> => {
+export const createUser = async (
+  token: string,
+  data: object,
+): Promise<ISessionResponse> => {
   return api
-    .post<ISessionResponse>("/user", data, { headers: { Authorization: `Bearer ${token}` } })
+    .post<ISessionResponse>("/user", data, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
     .then(function (response) {
       return response.data;
     })
@@ -312,17 +442,28 @@ export const createUser = async (token: string, data: object): Promise<ISessionR
     });
 };
 
-export const deleteUser = async (token: string, userId: string): Promise<void> => {
+export const deleteUser = async (
+  token: string,
+  userId: string,
+): Promise<void> => {
   return api
-    .delete<void>(`/user/${userId}`, { headers: { Authorization: `Bearer ${token}` } })
+    .delete<void>(`/user/${userId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
     .then((response) => response.data)
     .catch((error) => Promise.reject(error));
 };
 
-export const getUsersSessionsInfo = async (token: string, deviceId?: string): Promise<ISessionInfo[]> => {
+export const getUsersSessionsInfo = async (
+  token: string,
+  deviceId?: string,
+): Promise<ISessionInfo[]> => {
   const params = deviceId ? { device_id: deviceId } : {};
   return api
-    .get<ISessionInfo[]>(`/users-sessions`, { headers: { Authorization: `Bearer ${token}` }, params })
+    .get<ISessionInfo[]>(`/users-sessions`, {
+      headers: { Authorization: `Bearer ${token}` },
+      params,
+    })
     .then(function (response) {
       return response.data;
     })
@@ -333,7 +474,7 @@ export const getUsersSessionsInfo = async (token: string, deviceId?: string): Pr
 
 export const getSessionActivityDetail = async (
   token: string,
-  sessionId: string
+  sessionId: string,
 ): Promise<ISessionActivityDetail> => {
   return api
     .get<ISessionActivityDetail>(`/manage/sessions/${sessionId}/detail`, {
@@ -345,7 +486,7 @@ export const getSessionActivityDetail = async (
 
 export const getSessionAnalytics = async (
   token: string,
-  days = 30
+  days = 30,
 ): Promise<ISessionAnalytics> => {
   return api
     .get<ISessionAnalytics>("/manage/sessions/analytics", {
@@ -371,13 +512,13 @@ export interface ISessionHeartbeatResponse {
 export const sendSessionHeartbeat = async (
   token: string,
   sessionToken: string,
-  pages: ISessionHeartbeatPage[]
+  pages: ISessionHeartbeatPage[],
 ): Promise<ISessionHeartbeatResponse> => {
   return api
     .put<ISessionHeartbeatResponse>(
       "/sessions/heartbeat",
       { session_token: sessionToken, pages },
-      { headers: { Authorization: `Bearer ${token}` } }
+      { headers: { Authorization: `Bearer ${token}` } },
     )
     .then((response) => response.data)
     .catch((error) => Promise.reject(error));
@@ -389,7 +530,7 @@ export const sendSessionHeartbeat = async (
 import type { IPermissionsByModule, IRole } from "../interfaces/IRbac";
 
 export const listPermissionsGrouped = async (
-  token: string
+  token: string,
 ): Promise<IPermissionsByModule> => {
   return api
     .get<IPermissionsByModule>("/permissions", {
@@ -406,7 +547,7 @@ export const listRoles = async (token: string): Promise<IRole[]> => {
 
 export const getRole = async (
   token: string,
-  roleId: string
+  roleId: string,
 ): Promise<IRole> => {
   return api
     .get<IRole>(`/roles/${roleId}`, {
@@ -417,7 +558,7 @@ export const getRole = async (
 
 export const createRole = async (
   token: string,
-  data: { name: string; description?: string }
+  data: { name: string; description?: string },
 ): Promise<IRole> => {
   return api
     .post<IRole>("/roles", data, {
@@ -429,7 +570,7 @@ export const createRole = async (
 export const updateRole = async (
   token: string,
   roleId: string,
-  data: { name?: string; description?: string; is_active?: boolean }
+  data: { name?: string; description?: string; is_active?: boolean },
 ): Promise<IRole> => {
   return api
     .put<IRole>(`/roles/${roleId}`, data, {
@@ -441,20 +582,20 @@ export const updateRole = async (
 export const updateRolePermissions = async (
   token: string,
   roleId: string,
-  permissionIds: string[]
+  permissionIds: string[],
 ): Promise<void> => {
   return api
     .put<void>(
       `/roles/${roleId}/permissions`,
       { permission_ids: permissionIds },
-      { headers: { Authorization: `Bearer ${token}` } }
+      { headers: { Authorization: `Bearer ${token}` } },
     )
     .then((r) => r.data);
 };
 
 export const deleteRole = async (
   token: string,
-  roleId: string
+  roleId: string,
 ): Promise<void> => {
   return api
     .delete<void>(`/roles/${roleId}`, {
@@ -470,13 +611,13 @@ export const deleteRole = async (
 export const updateUserRole = async (
   token: string,
   userId: string,
-  role: "User" | "Admin"
+  role: "User" | "Admin",
 ): Promise<void> => {
   return api
     .put<void>(
       `/user/${userId}/role`,
       { role },
-      { headers: { Authorization: `Bearer ${token}` } }
+      { headers: { Authorization: `Bearer ${token}` } },
     )
     .then((response) => response.data)
     .catch((error) => Promise.reject(error));
@@ -486,13 +627,16 @@ export const resetUserPassword = async (
   token: string,
   userId: string,
   newPassword: string,
-  forceChangeNextSignin: boolean = true
+  forceChangeNextSignin: boolean = true,
 ): Promise<void> => {
   return api
     .post<void>(
       `/user/${userId}/reset-password`,
-      { new_password: newPassword, force_change_next_signin: forceChangeNextSignin },
-      { headers: { Authorization: `Bearer ${token}` } }
+      {
+        new_password: newPassword,
+        force_change_next_signin: forceChangeNextSignin,
+      },
+      { headers: { Authorization: `Bearer ${token}` } },
     )
     .then((response) => response.data)
     .catch((error) => Promise.reject(error));
@@ -526,7 +670,7 @@ export interface IDivipolaStatus {
 export const uploadDivipola = async (
   token: string,
   file: File,
-  mode?: "replace"
+  mode?: "replace",
 ): Promise<IDivipolaUploadResponse> => {
   const formData = new FormData();
   formData.append("file", file);
@@ -545,7 +689,7 @@ export const uploadDivipola = async (
 };
 
 export const getDivipolaStatus = async (
-  token: string
+  token: string,
 ): Promise<IDivipolaStatus> => {
   return api
     .get<IDivipolaStatus>("/divipola/status", {
@@ -561,13 +705,13 @@ export const getDivipolaStatus = async (
 export const upsertUserZones = async (
   token: string,
   userId: string,
-  zones: IUserZone[]
+  zones: IUserZone[],
 ): Promise<void> => {
   return api
     .put<void>(
       `/user/${userId}/zones`,
       { zones },
-      { headers: { Authorization: `Bearer ${token}` } }
+      { headers: { Authorization: `Bearer ${token}` } },
     )
     .then((r) => r.data);
 };

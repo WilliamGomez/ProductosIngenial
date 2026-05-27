@@ -14,9 +14,16 @@ POWER_BI_URL = "https://api.powerbi.com/v1.0"
 
 
 class PowerBIAdapter(IPowerBIRepository):
-    def __init__(self):
-        self.token = get_access_token()
+    def __init__(self, tenant_id: str | None = None):
+        self.tenant_id = tenant_id
+        self.token = get_access_token(tenant_id)
         self.group = os.getenv("POWER_BI_GROUP_ID")
+
+    def set_tenant_id(self, tenant_id: str | None) -> None:
+        if not tenant_id or tenant_id == self.tenant_id:
+            return
+        self.tenant_id = tenant_id
+        self.token = get_access_token(tenant_id)
 
     def _headers(self):
         return {

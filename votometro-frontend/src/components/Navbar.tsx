@@ -1,37 +1,18 @@
     import { useEffect, useRef, useState } from "react";
-    import { LogOut, Shield, ChevronDown, User as UserIcon } from "lucide-react";
+    import { LogOut, ChevronDown, User as UserIcon, Maximize2, Minimize2 } from "lucide-react";
     import { useSession } from "../context/SessionContext";
-    import { useAccessToken } from "../hooks/useAccessToken";
-    import { forceLogoutAll } from "../services/api";
-    import Swal from "sweetalert2";
-    import withReactContent from "sweetalert2-react-content";
     import { Avatar } from "./ui/Avatar";
     import { Badge } from "./ui/Badge";
     import { cn } from "../lib/cn";
 
-    const MySwal = withReactContent(Swal);
-
     /**
-     * Navbar — barra superior moderna.
-     *
-     * Contenido:
-     *   · Izquierda: hueco (la marca vive en el sidebar — patrón Tabler).
-     *   · Derecha:   avatar + dropdown con info de usuario y acciones.
-     *
-     * Acciones del dropdown (mismas que el Navbar legacy, sólo reorganizadas):
-     *   · Cerrar todas las sesiones (con SweetAlert confirm)
-     *   · Cerrar sesión
-     *
-     * NO toca:
-     *   · `useSession()` — sigue dando user/isLoading/logoutAndCleanup.
-     *   · `forceLogoutAll(token)` — misma firma.
-     *   · MSAL (todo pasa via SessionContext.logoutAndCleanup).
+     * Navbar: barra superior con toggle de pantalla completa y menu de usuario.
      */
     export default function Navbar() {
         const { logoutAndCleanup, user, isLoading } = useSession();
-        const { getToken } = useAccessToken();
 
         const [menuOpen, setMenuOpen] = useState(false);
+        const [isFullscreen, setIsFullscreen] = useState(false);
         const menuRef = useRef<HTMLDivElement | null>(null);
 
         // Cierra el dropdown al click fuera o al presionar Esc.
@@ -59,50 +40,32 @@
             };
         }, [menuOpen]);
 
+        useEffect(() => {
+            const syncFullscreenState = () => {
+                setIsFullscreen(Boolean(document.fullscreenElement));
+            };
+
+            syncFullscreenState();
+            document.addEventListener("fullscreenchange", syncFullscreenState);
+            return () => {
+                document.removeEventListener("fullscreenchange", syncFullscreenState);
+            };
+        }, []);
+
         const handleLogout = async () => {
             setMenuOpen(false);
             await logoutAndCleanup();
         };
 
-        const handleCloseAllSessions = async () => {
-            setMenuOpen(false);
-            const result = await MySwal.fire({
-                title: "¿Cerrar todas las sesiones?",
-                html: `
-                    <p>Esto cerrará tu sesión en <strong>todos los dispositivos</strong>.</p>
-                    <p>Tendrás que volver a iniciar sesión.</p>
-                `,
-                icon: "warning",
-                showCancelButton: true,
-                confirmButtonText: "Sí, cerrar todas",
-                cancelButtonText: "Cancelar",
-                confirmButtonColor: "#e11d48", // rose-600 — alineado con el design system
-                cancelButtonColor: "#64748b", // slate-500
-            });
-
-            if (result.isConfirmed) {
-                try {
-                    const token = await getToken();
-                    await forceLogoutAll(token);
-                    await logoutAndCleanup({
-                        invalidateOnServer: false,
-                        triggerMsalLogout: true,
-                        reason: "User requested force logout all sessions",
-                    });
-                    await MySwal.fire({
-                        title: "Sesiones cerradas",
-                        text: "Todas tus sesiones han sido cerradas. Por favor inicia sesión nuevamente.",
-                        icon: "success",
-                        timer: 3000,
-                    });
-                } catch (error) {
-                    console.error("Error closing all sessions:", error);
-                    await MySwal.fire({
-                        title: "Error",
-                        text: "No se pudieron cerrar todas las sesiones. Por favor intenta nuevamente.",
-                        icon: "error",
-                    });
+        const handleToggleFullscreen = async () => {
+            try {
+                if (document.fullscreenElement) {
+                    await document.exitFullscreen();
+                    return;
                 }
+                await document.documentElement.requestFullscreen();
+            } catch (error) {
+                console.warn("[Navbar] fullscreen toggle failed", error);
             }
         };
 
@@ -117,6 +80,26 @@
                     "flex items-center justify-end gap-3 px-6"
                 )}
             >
+                <button
+                    type="button"
+                    onClick={handleToggleFullscreen}
+                    className={cn(
+                        "inline-flex h-10 w-10 items-center justify-center rounded-full",
+                        "border border-slate-200 bg-white text-slate-500 transition-colors",
+                        "hover:bg-slate-50 hover:text-slate-900",
+                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/30"
+                    )}
+                    title={isFullscreen ? "Salir de pantalla completa" : "Pantalla completa"}
+                    aria-label={isFullscreen ? "Salir de pantalla completa" : "Pantalla completa"}
+                    aria-pressed={isFullscreen}
+                >
+                    {isFullscreen ? (
+                        <Minimize2 className="h-4 w-4" />
+                    ) : (
+                        <Maximize2 className="h-4 w-4" />
+                    )}
+                </button>
+
                 {/* User chip + dropdown ----------------------------------------- */}
                 <div className="relative" ref={menuRef}>
                     <button
@@ -196,15 +179,6 @@
 
                             {/* Acciones */}
                             <div className="border-t border-slate-100 py-1">
-                                <button
-                                    type="button"
-                                    onClick={handleCloseAllSessions}
-                                    className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50"
-                                    role="menuitem"
-                                >
-                                    <Shield className="h-4 w-4" />
-                                    Cerrar todas las sesiones
-                                </button>
                                 <button
                                     type="button"
                                     onClick={handleLogout}

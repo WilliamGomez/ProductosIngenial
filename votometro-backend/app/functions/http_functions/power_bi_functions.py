@@ -57,6 +57,7 @@ def get_power_bi_report_by_id(req: func.HttpRequest) -> func.HttpResponse:
 
     try:
         from app.power_bi.power_bi_adapter import PowerBIAdapter
+        from app.sql.product_catalog_sql_adapter import ProductCatalogSqlAdapter
         from app.sql.user_zones_sql_adapter import UserZonesSqlAdapter
         from use_cases.power_bi_data import PowerBIUseCase
 
@@ -66,6 +67,7 @@ def get_power_bi_report_by_id(req: func.HttpRequest) -> func.HttpResponse:
         use_case = PowerBIUseCase(
             power_bi_repository=PowerBIAdapter(),
             user_zones_repository=UserZonesSqlAdapter(),
+            product_catalog_repository=ProductCatalogSqlAdapter(),
         )
         payload = use_case.execute_for_user(user, report_id)
         return _json_response(payload, HTTPStatus.OK)

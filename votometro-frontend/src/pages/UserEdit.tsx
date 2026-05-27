@@ -7,6 +7,9 @@ import {
     CheckCircle2,
     XCircle,
     Loader2,
+    Package,
+    MapPin,
+    X,
 } from "lucide-react";
 import { useAccessToken } from "../hooks/useAccessToken";
 import {
@@ -16,16 +19,17 @@ import {
     updateUserInfo,
     updateUserproducts,
     createUser,
+    getProductReportCatalog,
+    type IProductReportCatalogItem,
 } from "../services/api";
 import type { IUser } from "../interfaces/IUser";
 import type {
-    IProductsFormData,
     IUserInfoFormData,
 } from "../interfaces/IRegisterUserFormData";
 import type { IDepartment } from "../interfaces/IDepartments";
 import type { IMunicipio } from "../interfaces/IMunicipio";
 import type { IUserZone } from "../services/api";
-import ProductsSelector from "../components/ProductsSelector";
+import ZonesSelector from "../components/ZonesSelector";
 import {
     Button,
     Card,
@@ -36,7 +40,7 @@ import {
 } from "../components/ui";
 import { Spinner } from "../components/ui/Spinner";
 import { cn } from "../lib/cn";
-import { isProductActive, isProductExpired } from "../utils/productStatus";
+import { isProductActive } from "../utils/productStatus";
 
 const initialFormData: IUserInfoFormData = {
     display_name: "",
@@ -64,6 +68,49 @@ const inputErrorClasses = cn(
 );
 
 const labelClasses = "block text-xs font-semibold text-slate-700 mb-1.5";
+const durationOptions = ["1 mes", "3 meses", "4 meses", "6 meses", "1 ano"];
+
+type ProductAssignment = {
+    enabled: boolean;
+    duration: string;
+    zones: IUserZone[];
+};
+
+const productKey = (name: string) => name.trim().toLowerCase();
+
+const durationToLabel = (duration?: number, unit?: string) => {
+    if (duration == null || !unit) return "";
+    const normalizedUnit =
+        unit === "months"
+            ? duration === 1
+                ? "mes"
+                : "meses"
+            : unit === "years"
+            ? duration === 1
+                ? "ano"
+                : "anos"
+            : unit === "hours"
+            ? duration === 1
+                ? "hora"
+                : "horas"
+            : duration === 1
+            ? "dia"
+            : "dias";
+    return `${duration} ${normalizedUnit}`;
+};
+
+const durationFromLabel = (value: string) => {
+    const [amountText, unitText = ""] = value.split(" ");
+    const amount = parseInt(amountText, 10) || 1;
+    const unit = unitText.includes("mes")
+        ? "months"
+        : unitText.includes("ano") || unitText.includes("año")
+        ? "years"
+        : unitText.includes("hora")
+        ? "hours"
+        : "days";
+    return { amount, unit };
+};
 
 const padDep = (value: string | number) => String(value).padStart(2, "0");
 const toUiZoneCode = (codDep: string | number, codMun: string | number | null) => {
@@ -111,19 +158,9 @@ const UserEdit = () => {
     // Catálogos geo
     const [departamentos, setDepartamentos] = useState<IDepartment[]>([]);
     const [municipios, setMunicipios] = useState<IMunicipio[]>([]);
-
-    // Estados simplificados para usar con el nuevo ZonesSelector
-    const [votometroZones, setVotometroZones] = useState<IUserZone[]>([]);
-    const [audivotoZones, setAudivotoZones] = useState<IUserZone[]>([]);
-    const [votometroEnabled, setVotometroEnabled] = useState<boolean>(false);
-    const [audivotoEnabled, setAudivotoEnabled] = useState<boolean>(false);
-
-    const [productsFormData, setProductsFormData] = useState<IProductsFormData>({
-        tiempoContratacionVotometro: "",
-        tiempoContratacionAudivoto: "",
-        initialProducts: [],
-        newProducts: [],
-    });
+    const [productCatalog, setProductCatalog] = useState<IProductReportCatalogItem[]>([]);
+    const [activeProductName, setActiveProductName] = useState("");
+    const [productAssignments, setProductAssignments] = useState<Record<string, ProductAssignment>>({});
 
     useEffect(() => {
         if (!isCreateMode) loadUser();
@@ -154,12 +191,18 @@ const UserEdit = () => {
     const loadCatalogs = async () => {
         try {
             const token = await getToken();
-            const [d, m] = await Promise.all([
+            const [d, m, catalog] = await Promise.all([
                 getDepartments(token),
                 getMunicipalities(token),
+                getProductReportCatalog(token, true),
             ]);
             setDepartamentos(d ?? []);
             setMunicipios(m ?? []);
+            const availableCatalog = (catalog ?? []).filter(
+                (product) => product.is_report_enabled !== false
+            );
+            setProductCatalog(availableCatalog);
+            setActiveProductName((current) => current || availableCatalog[0]?.name || "");
         } catch (err) {
             console.error("Error al cargar catálogos:", err);
         }
@@ -184,24 +227,6 @@ const UserEdit = () => {
             ...product,
             enable: isProductActive(product),
         }));
-        const votometro = products.find((p) => p.name === "Votometro");
-        const audivoto = products.find((p) => p.name === "Audivoto");
-        const activeVotometro = votometro && isProductActive(votometro) ? votometro : undefined;
-        const activeAudivoto = audivoto && isProductActive(audivoto) ? audivoto : undefined;
-
-        setVotometroEnabled(!!activeVotometro);
-        setAudivotoEnabled(!!activeAudivoto);
-
-        setProductsFormData({
-            tiempoContratacionVotometro: activeVotometro && activeVotometro.contract_duration != null
-                ? String(activeVotometro.contract_duration) + " " + (activeVotometro.duration_unit === "months" ? "meses" : activeVotometro.duration_unit === "years" ? "años" : "días")
-                : "",
-            tiempoContratacionAudivoto: activeAudivoto && activeAudivoto.contract_duration != null
-                ? String(activeAudivoto.contract_duration) + " " + (activeAudivoto.duration_unit === "months" ? "meses" : activeAudivoto.duration_unit === "years" ? "años" : "días")
-                : "",
-            initialProducts: products,
-            newProducts: products,
-        });
 
         // Parseador maestro para hidratar Zonas desde el formato anterior si es necesario
         const parseZones = (stateStr?: string, cityStr?: string): IUserZone[] => {
@@ -238,15 +263,54 @@ const UserEdit = () => {
             return catalogsReady ? parseZones(product.state, product.city) : [];
         };
 
-        setVotometroZones(hydrateProductZones(activeVotometro));
-        setAudivotoZones(hydrateProductZones(activeAudivoto));
+        const catalogSource =
+            productCatalog.length > 0
+                ? productCatalog
+                : products.map((product) => ({
+                      id: null,
+                      name: product.name,
+                      display_name: product.display_name || product.name,
+                      route_path: product.route_path || `/${product.name.toLowerCase()}`,
+                      powerbi_report_id: product.powerbi_report_id || "",
+                      powerbi_workspace_id: product.powerbi_workspace_id || null,
+                      powerbi_tenant_id: product.powerbi_tenant_id || null,
+                      icon: product.icon || null,
+                      display_order: product.display_order ?? 100,
+                      is_report_enabled: product.is_report_enabled !== false,
+                      description: product.description || null,
+                  }));
+
+        const nextAssignments = catalogSource.reduce<Record<string, ProductAssignment>>(
+            (acc, catalogProduct) => {
+                const existing = products.find(
+                    (product) =>
+                        product.name.toLowerCase() ===
+                        catalogProduct.name.toLowerCase()
+                );
+                acc[productKey(catalogProduct.name)] = {
+                    enabled: Boolean(existing && isProductActive(existing)),
+                    duration: durationToLabel(
+                        existing?.contract_duration,
+                        existing?.duration_unit
+                    ),
+                    zones: hydrateProductZones(existing),
+                };
+                return acc;
+            },
+            {}
+        );
+
+        setProductAssignments(nextAssignments);
+        setActiveProductName(
+            (current) => current || catalogSource[0]?.name || products[0]?.name || ""
+        );
     };
 
     useEffect(() => {
         if (selectedUser) {
             hydrateFromUser(selectedUser);
         }
-    }, [departamentos, municipios, selectedUser]);
+    }, [departamentos, municipios, productCatalog, selectedUser]);
 
     const validateForm = () => {
         const next: Partial<IUserInfoFormData> & { password?: string; confirmPassword?: string; } = {};
@@ -297,22 +361,27 @@ const UserEdit = () => {
 
     const validateProducts = (): boolean => {
         const e: { [key: string]: string } = {};
-        const hasAtLeastOne = votometroEnabled || audivotoEnabled;
+        const activeAssignments = Object.entries(productAssignments).filter(
+            ([, assignment]) => assignment.enabled
+        );
         
-        if (!hasAtLeastOne) {
-            setProductsErrors({ general: "Debe habilitar al menos un producto: Votómetro o Audivoto." });
+        if (activeAssignments.length === 0) {
+            setProductsErrors({ general: "Debe habilitar al menos un producto." });
             return false;
         }
 
-        if (votometroEnabled) {
-            if (!productsFormData.tiempoContratacionVotometro) e.tiempoContratacionVotometro = "El tiempo de contratación es requerido.";
-            if (votometroZones.length === 0) e.zonasVotometro = "Debe asignar al menos una zona geográfica.";
-        }
-
-        if (audivotoEnabled) {
-            if (!productsFormData.tiempoContratacionAudivoto) e.tiempoContratacionAudivoto = "El tiempo de contratación es requerido.";
-            if (audivotoZones.length === 0) e.zonasAudivoto = "Debe asignar al menos una zona geográfica.";
-        }
+        activeAssignments.forEach(([key, assignment]) => {
+            const product = productCatalog.find(
+                (item) => productKey(item.name) === key
+            );
+            const label = product?.display_name || product?.name || key;
+            if (!assignment.duration) {
+                e[`${key}.duration`] = `El tiempo de contratacion de ${label} es requerido.`;
+            }
+            if (assignment.zones.length === 0) {
+                e[`${key}.zones`] = `Debe asignar al menos una zona geografica para ${label}.`;
+            }
+        });
 
         setProductsErrors(e);
         return Object.keys(e).length === 0;
@@ -404,38 +473,29 @@ const UserEdit = () => {
         if (!validateProducts()) return;
         setLoading(true);
 
-        const updatedProducts: any[] = [];
         const existingProducts = selectedUser.products ?? [];
-
-        if (votometroEnabled && votometroZones.length > 0) {
-            const unit = productsFormData.tiempoContratacionVotometro.split(" ")[1];
-            const existingVotometro = existingProducts.find((p) => p.name === "Votometro" && !isProductExpired(p));
-            
-            updatedProducts.push({
-                name: "Votometro",
-                id: existingVotometro?.id || null,
-                contract_duration: parseInt(productsFormData.tiempoContratacionVotometro.split(" ")[0]),
-                duration_unit: unit?.includes("mes") ? "months" : unit?.includes("año") ? "years" : "days",
-                amount_cop: 150000.0,
-                enable: true,
-                zones: toBackendZones(votometroZones)
+        const updatedProducts = Object.entries(productAssignments)
+            .filter(([, assignment]) => assignment.enabled)
+            .map(([key, assignment]) => {
+                const catalogProduct = productCatalog.find(
+                    (product) => productKey(product.name) === key
+                );
+                const productName = catalogProduct?.name || key;
+                const existingProduct = existingProducts.find(
+                    (product) =>
+                        product.name.toLowerCase() === productName.toLowerCase()
+                );
+                const duration = durationFromLabel(assignment.duration);
+                return {
+                    name: productName,
+                    id: existingProduct?.id || null,
+                    contract_duration: duration.amount,
+                    duration_unit: duration.unit,
+                    amount_cop: existingProduct?.amount_cop || 150000.0,
+                    enable: true,
+                    zones: toBackendZones(assignment.zones),
+                };
             });
-        }
-
-        if (audivotoEnabled && audivotoZones.length > 0) {
-            const unit = productsFormData.tiempoContratacionAudivoto.split(" ")[1];
-            const existingAudivoto = existingProducts.find((p) => p.name === "Audivoto" && !isProductExpired(p));
-            
-            updatedProducts.push({
-                name: "Audivoto",
-                id: existingAudivoto?.id || null,
-                contract_duration: parseInt(productsFormData.tiempoContratacionAudivoto.split(" ")[0]),
-                duration_unit: unit?.includes("mes") ? "months" : unit?.includes("año") ? "years" : "days",
-                amount_cop: 150000.0,
-                enable: true,
-                zones: toBackendZones(audivotoZones)
-            });
-        }
 
         try {
             const token = await getToken();
@@ -458,6 +518,63 @@ const UserEdit = () => {
         } finally {
             setLoading(false);
         }
+    };
+
+    const catalogForAssignment =
+        productCatalog.length > 0
+            ? productCatalog
+            : (selectedUser?.products ?? []).map((product) => ({
+                  id: null,
+                  name: product.name,
+                  display_name: product.display_name || product.name,
+                  route_path: product.route_path || `/${product.name.toLowerCase()}`,
+                  powerbi_report_id: product.powerbi_report_id || "",
+                  powerbi_workspace_id: product.powerbi_workspace_id || null,
+                  powerbi_tenant_id: product.powerbi_tenant_id || null,
+                  icon: product.icon || null,
+                  display_order: product.display_order ?? 100,
+                  is_report_enabled: product.is_report_enabled !== false,
+                  description: product.description || null,
+              }));
+
+    const sortedProductCatalog = [...catalogForAssignment].sort(
+        (a, b) => (a.display_order ?? 100) - (b.display_order ?? 100)
+    );
+    const activeProduct =
+        sortedProductCatalog.find((product) => product.name === activeProductName) ||
+        sortedProductCatalog[0];
+    const activeKey = activeProduct ? productKey(activeProduct.name) : "";
+    const activeAssignment = activeKey
+        ? productAssignments[activeKey] || {
+              enabled: false,
+              duration: "",
+              zones: [],
+          }
+        : null;
+
+    const updateProductAssignment = (
+        productName: string,
+        patch: Partial<ProductAssignment>
+    ) => {
+        const key = productKey(productName);
+        setProductAssignments((prev) => ({
+            ...prev,
+            [key]: {
+                ...(prev[key] ?? {
+                    enabled: false,
+                    duration: "",
+                    zones: [],
+                }),
+                ...patch,
+            },
+        }));
+        setProductsErrors((prev) => {
+            const next = { ...prev };
+            delete next[`${key}.duration`];
+            delete next[`${key}.zones`];
+            delete next.general;
+            return next;
+        });
     };
 
     if (pageLoading) {
@@ -841,23 +958,176 @@ const UserEdit = () => {
                             )}
                         </div>
                     ) : (
-                        <div>
-                            <ProductsSelector
-                                votometroZones={votometroZones}
-                                setVotometroZones={setVotometroZones}
-                                audivotoZones={audivotoZones}
-                                setAudivotoZones={setAudivotoZones}
-                                votometroEnabled={votometroEnabled}
-                                setVotometroEnabled={setVotometroEnabled}
-                                audivotoEnabled={audivotoEnabled}
-                                setAudivotoEnabled={setAudivotoEnabled}
-                                formData={productsFormData}
-                                setFormData={setProductsFormData}
-                                errors={productsErrors}
-                                setErrors={setProductsErrors}
-                                departamentos={departamentos}
-                                municipios={municipios}
-                            />
+                        <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+                            <div className="space-y-3 lg:col-span-4">
+                                {productsErrors.general && (
+                                    <div className="rounded-lg border border-rose-100 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                                        {productsErrors.general}
+                                    </div>
+                                )}
+                                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                                    <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                                        Productos disponibles
+                                    </p>
+                                    <div className="max-h-[34rem] space-y-2 overflow-y-auto pr-1">
+                                        {sortedProductCatalog.map((product) => {
+                                            const key = productKey(product.name);
+                                            const assignment = productAssignments[key];
+                                            const active = activeProduct?.name === product.name;
+                                            return (
+                                                <button
+                                                    key={product.name}
+                                                    type="button"
+                                                    onClick={() => setActiveProductName(product.name)}
+                                                    className={cn(
+                                                        "w-full rounded-lg border px-3 py-3 text-left transition-colors",
+                                                        active
+                                                            ? "border-brand-200 bg-white text-brand-700 shadow-sm"
+                                                            : "border-transparent bg-transparent text-slate-600 hover:bg-white"
+                                                    )}
+                                                >
+                                                    <span className="flex items-center justify-between gap-2">
+                                                        <span className="flex min-w-0 items-center gap-2">
+                                                            <Package className="h-4 w-4 flex-shrink-0" />
+                                                            <span className="truncate text-sm font-semibold">
+                                                                {product.display_name || product.name}
+                                                            </span>
+                                                        </span>
+                                                        <span
+                                                            className={cn(
+                                                                "rounded-full px-2 py-0.5 text-[10px] font-bold uppercase",
+                                                                assignment?.enabled
+                                                                    ? "bg-emerald-50 text-emerald-700"
+                                                                    : "bg-slate-100 text-slate-500"
+                                                            )}
+                                                        >
+                                                            {assignment?.enabled ? "Activo" : "Off"}
+                                                        </span>
+                                                    </span>
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="lg:col-span-8">
+                                {activeProduct && activeAssignment ? (
+                                    <div className="space-y-5 rounded-xl border border-slate-200 bg-white p-5">
+                                        <div className="flex flex-wrap items-start justify-between gap-3">
+                                            <div>
+                                                <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                                                    Relacion usuario-producto
+                                                </p>
+                                                <h3 className="mt-1 text-lg font-semibold text-slate-900">
+                                                    {activeProduct.display_name || activeProduct.name}
+                                                </h3>
+                                            </div>
+                                            <label className="relative inline-flex cursor-pointer items-center">
+                                                <input
+                                                    type="checkbox"
+                                                    className="peer sr-only"
+                                                    checked={activeAssignment.enabled}
+                                                    onChange={(event) =>
+                                                        updateProductAssignment(activeProduct.name, {
+                                                            enabled: event.target.checked,
+                                                        })
+                                                    }
+                                                />
+                                                <div className="h-6 w-11 rounded-full bg-slate-200 after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all after:content-[''] peer-checked:bg-brand-600 peer-checked:after:translate-x-full peer-checked:after:border-white"></div>
+                                            </label>
+                                        </div>
+
+                                        <div className={!activeAssignment.enabled ? "pointer-events-none opacity-50" : ""}>
+                                            <Field
+                                                label="Tiempo de contratacion"
+                                                error={productsErrors[`${activeKey}.duration`]}
+                                            >
+                                                <select
+                                                    value={activeAssignment.duration}
+                                                    onChange={(event) =>
+                                                        updateProductAssignment(activeProduct.name, {
+                                                            duration: event.target.value,
+                                                        })
+                                                    }
+                                                    className={inputClasses}
+                                                >
+                                                    <option value="">Seleccione un tiempo</option>
+                                                    {durationOptions.map((option) => (
+                                                        <option key={option} value={option}>
+                                                            {option}
+                                                        </option>
+                                                    ))}
+                                                </select>
+                                            </Field>
+
+                                            <div className="mt-5">
+                                                <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                                                    <MapPin className="h-4 w-4" />
+                                                    Asignacion geografica
+                                                </div>
+                                                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                                                    <ZonesSelector
+                                                        departments={departamentos}
+                                                        municipalities={municipios}
+                                                        value={activeAssignment.zones}
+                                                        onChange={(zones) =>
+                                                            updateProductAssignment(activeProduct.name, {
+                                                                zones,
+                                                            })
+                                                        }
+                                                        disabled={!activeAssignment.enabled}
+                                                    />
+                                                </div>
+                                                {productsErrors[`${activeKey}.zones`] && (
+                                                    <p className="mt-1.5 text-xs text-rose-600">
+                                                        {productsErrors[`${activeKey}.zones`]}
+                                                    </p>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        {activeAssignment.zones.length > 0 && (
+                                            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                                                <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                                                    Zonas asignadas
+                                                </p>
+                                                <div className="max-h-48 space-y-2 overflow-y-auto pr-1">
+                                                    {activeAssignment.zones.map((zone, index) => (
+                                                        <div
+                                                            key={`${zone.cod_dep}-${zone.cod_mun ?? "all"}-${index}`}
+                                                            className="flex items-center justify-between rounded-lg bg-white px-3 py-2 text-sm text-slate-700"
+                                                        >
+                                                            <span>
+                                                                Departamento {zone.cod_dep}
+                                                                {zone.cod_mun ? ` / Municipio ${zone.cod_mun}` : " / Todos"}
+                                                            </span>
+                                                            <button
+                                                                type="button"
+                                                                className="text-slate-400 hover:text-rose-600"
+                                                                onClick={() =>
+                                                                    updateProductAssignment(activeProduct.name, {
+                                                                        zones: activeAssignment.zones.filter(
+                                                                            (_, itemIndex) => itemIndex !== index
+                                                                        ),
+                                                                    })
+                                                                }
+                                                            >
+                                                                <X className="h-4 w-4" />
+                                                            </button>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                ) : (
+                                    <EmptyState
+                                        title="No hay productos configurados"
+                                        description="Crea primero un producto en Administracion > Productos."
+                                    />
+                                )}
+                            </div>
                         </div>
                     )}
                 </CardBody>

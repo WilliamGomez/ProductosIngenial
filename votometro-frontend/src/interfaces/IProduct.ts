@@ -10,4 +10,13 @@ export interface IProduct {
   country?: string;
   state?: string;
   city?: string;
+  display_name?: string | null;
+  route_path?: string | null;
+  powerbi_report_id?: string | null;
+  powerbi_workspace_id?: string | null;
+  powerbi_tenant_id?: string | null;
+  icon?: string | null;
+  display_order?: number;
+  is_report_enabled?: boolean;
+  description?: string | null;
 }

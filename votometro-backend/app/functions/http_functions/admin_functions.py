@@ -15,10 +15,12 @@ import json
 import logging
 from http import HTTPStatus
 from typing import Optional, Tuple
+from uuid import UUID
 
 import azure.functions as func
 
 from app.sql.rbac_sql_adapter import RbacSqlAdapter
+from app.sql.product_catalog_sql_adapter import ProductCatalogSqlAdapter
 from app.sql.user_sql_adapter import UserSqlAdapter
 from domain.exceptions import (
     InvalidPermissionException,
@@ -110,6 +112,127 @@ def _serialize_role(role) -> dict:
             for p in role.permissions
         ],
     }
+
+
+def _json_response(payload, status=HTTPStatus.OK) -> func.HttpResponse:
+    body = json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
+    return func.HttpResponse(body=body, status_code=int(status), mimetype=MIMETYPE)
+
+
+def _validate_product_report_payload(data: dict) -> dict:
+    name = str(data.get("name") or "").strip()
+    display_name = str(data.get("display_name") or name).strip()
+    route_path = str(data.get("route_path") or "").strip().lower()
+    report_id = str(data.get("powerbi_report_id") or "").strip()
+    workspace_id = str(data.get("powerbi_workspace_id") or "").strip() or None
+    tenant_id = str(data.get("powerbi_tenant_id") or "").strip() or None
+
+    if not name:
+        raise ValueError("name is required")
+    if not route_path.startswith("/"):
+        raise ValueError("route_path must start with /")
+    if not report_id:
+        raise ValueError("powerbi_report_id is required")
+    try:
+        report_id = str(UUID(report_id))
+    except ValueError as exc:
+        if "app.powerbi.com/view" in report_id.lower():
+            raise ValueError(
+                "powerbi_report_id must be the secure Power BI report GUID, not a publish-to-web /view?r= URL."
+            ) from exc
+        raise ValueError("powerbi_report_id must be a valid GUID") from exc
+    if workspace_id:
+        try:
+            workspace_id = str(UUID(workspace_id))
+        except ValueError as exc:
+            raise ValueError("powerbi_workspace_id must be a valid GUID or empty") from exc
+    if tenant_id:
+        try:
+            tenant_id = str(UUID(tenant_id))
+        except ValueError as exc:
+            raise ValueError("powerbi_tenant_id must be a valid GUID or empty") from exc
+
+    return {
+        "id": data.get("id"),
+        "name": name,
+        "display_name": display_name,
+        "route_path": route_path,
+        "powerbi_report_id": report_id,
+        "powerbi_workspace_id": workspace_id,
+        "powerbi_tenant_id": tenant_id,
+        "icon": str(data.get("icon") or "BarChart3").strip(),
+        "display_order": int(data.get("display_order") or 100),
+        "is_report_enabled": bool(data.get("is_report_enabled", True)),
+        "description": str(data.get("description") or "").strip() or None,
+    }
+
+
+# =============================================================================
+# GET/POST /admin/products   -> catalogo de productos embebibles Power BI
+# =============================================================================
+def _list_product_report_catalog(req: func.HttpRequest) -> func.HttpResponse:
+    _, deny = _require_admin(req)
+    if deny:
+        return deny
+    try:
+        include_disabled = str(req.params.get("include_disabled", "1")).lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+        rows = ProductCatalogSqlAdapter().list_products(include_disabled=include_disabled)
+        return _json_response(rows, HTTPStatus.OK)
+    except Exception as e:
+        logging.exception("ListProductReportCatalog failed: %s", e)
+        return _json_response({"error": "Internal error"}, HTTPStatus.INTERNAL_SERVER_ERROR)
+
+
+def _upsert_product_report_catalog(req: func.HttpRequest) -> func.HttpResponse:
+    _, deny = _require_admin(req)
+    if deny:
+        return deny
+    try:
+        data = req.get_json() or {}
+        payload = _validate_product_report_payload(data)
+        row = ProductCatalogSqlAdapter().upsert_product(payload)
+        return _json_response(row, HTTPStatus.OK)
+    except ValueError as err:
+        return _json_response({"error": str(err)}, HTTPStatus.BAD_REQUEST)
+    except Exception as e:
+        logging.exception("UpsertProductReportCatalog failed: %s", e)
+        return _json_response({"error": "Internal error"}, HTTPStatus.INTERNAL_SERVER_ERROR)
+
+
+@admin_bp.function_name(name="ListProductReportCatalog")
+@admin_bp.route(
+    route="products/catalog", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS
+)
+def list_product_report_catalog(req: func.HttpRequest) -> func.HttpResponse:
+    return _list_product_report_catalog(req)
+
+
+@admin_bp.function_name(name="ListProductReportCatalogLegacy")
+@admin_bp.route(
+    route="admin/products", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS
+)
+def list_product_report_catalog_legacy(req: func.HttpRequest) -> func.HttpResponse:
+    return _list_product_report_catalog(req)
+
+
+@admin_bp.function_name(name="UpsertProductReportCatalog")
+@admin_bp.route(
+    route="products/catalog", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS
+)
+def upsert_product_report_catalog(req: func.HttpRequest) -> func.HttpResponse:
+    return _upsert_product_report_catalog(req)
+
+
+@admin_bp.function_name(name="UpsertProductReportCatalogLegacy")
+@admin_bp.route(
+    route="admin/products", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS
+)
+def upsert_product_report_catalog_legacy(req: func.HttpRequest) -> func.HttpResponse:
+    return _upsert_product_report_catalog(req)
 
 
 # =============================================================================

@@ -51,7 +51,7 @@ flowchart LR
 - Origin: `origin-aca-web-uat`
 - Route: `route-votometro-web-uat`
 - Custom domain: `plataformas-ingenial-ia-com`
-- WAF policy: `waf-votometro-uat`
+- WAF policy: `wafvotometrouat`
 - Security policy: `sp-votometro-uat`
 
 ## Cambios DNS necesarios

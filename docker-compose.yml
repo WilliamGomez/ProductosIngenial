@@ -435,7 +435,9 @@ services:
 
     # --- Hardening ---
     user: "101:101"
-    read_only: true
+    # read_only: true  # Deshabilitado temporalmente porque nginxinc/nginx-unprivileged
+                      # necesita escribir en /etc/nginx/conf.d/ durante el entrypoint
+                      # para procesar envsubst en templates. Ver Dockerfile para detalles.
     tmpfs:
       - /tmp:size=16m,mode=1777
       - /var/cache/nginx:size=32m,mode=0755,uid=101,gid=101

@@ -1,11 +1,11 @@
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
     "PSAvoidUsingWriteHost",
     "",
-    Justification = "Este script operativo muestra fases de deploy rapido UAT."
+    Justification = "Script operativo de deploy productivo sobre el entorno fortalecido."
 )]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("backend", "frontend")]
+    [ValidateSet("backend", "frontend", "all")]
     [string]$Component,
 
     [string]$Tag = "",
@@ -21,6 +21,8 @@ $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $EnvFile = Join-Path $Root ".env"
 $LocalSettings = Join-Path $Root "secrets\local.settings.json"
 
+# Produccion actual: entorno UAT fortalecido con Front Door + WAF.
+# No crear otro ambiente. No tocar SQL. No ejecutar migraciones.
 $Rg = "rg-votometro-uat"
 $Acr = "acrvtmingenialuat"
 $ApiApp = "ca-votometro-api-uat"
@@ -34,7 +36,7 @@ $PublicWebUrl = "https://plataformas.ingenial-ia.com"
 
 function Test-RequiredCommand($Name) {
     if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
-        throw "[deploy-uat-app] Requerido '$Name' no esta instalado o no esta en PATH."
+        throw "[deploy-prod-app] Requerido '$Name' no esta instalado o no esta en PATH."
     }
 }
 
@@ -85,7 +87,7 @@ function Get-GitSha {
 
 function New-DefaultTag($ComponentName) {
     $timestamp = Get-Date -Format "yyyyMMddHHmmss"
-    return "uat-$ComponentName-$(Get-GitSha)-$timestamp".ToLowerInvariant()
+    return "prod-$ComponentName-$(Get-GitSha)-$timestamp".ToLowerInvariant()
 }
 
 function Get-ContainerAppImage($AppName) {
@@ -100,13 +102,13 @@ function Wait-ContainerAppImage($AppName, $ExpectedImage) {
     for ($attempt = 1; $attempt -le 18; $attempt++) {
         $currentImage = Get-ContainerAppImage $AppName
         if ($currentImage -eq $ExpectedImage) {
-            Write-Host "[deploy-uat-app] $AppName imagen OK: $ExpectedImage"
+            Write-Host "[deploy-prod-app] $AppName imagen OK: $ExpectedImage"
             return
         }
-        Write-Host "[deploy-uat-app] esperando imagen $AppName ($attempt/18). Actual=$currentImage"
+        Write-Host "[deploy-prod-app] esperando imagen $AppName ($attempt/18). Actual=$currentImage"
         Start-Sleep -Seconds 10
     }
-    throw "[deploy-uat-app] $AppName no quedo con la imagen esperada: $ExpectedImage"
+    throw "[deploy-prod-app] $AppName no quedo con la imagen esperada: $ExpectedImage"
 }
 
 function Wait-ContainerAppHealthy($AppName) {
@@ -118,7 +120,6 @@ function Wait-ContainerAppHealthy($AppName) {
         if ($revisions.PSObject.Properties["value"]) {
             $revisions = $revisions.value
         }
-        $candidate = $null
 
         foreach ($revision in @($revisions)) {
             $active = [string]$revision.active
@@ -163,144 +164,142 @@ function Wait-ContainerAppHealthy($AppName) {
             $hasReplica = ($replicas -ge 1 -or [string]::IsNullOrWhiteSpace($replicasText))
 
             if ($isRoutable -and $isProvisioned -and $isRunning -and $isHealthy -and $hasReplica) {
-                $candidate = @{
-                    Name = $revision.name
-                    ProvisioningState = $provisioningState
-                    RunningState = $runningState
-                    HealthState = $healthState
-                    Replicas = $replicas
-                    TrafficWeight = $trafficWeight
-                    Active = $active
-                }
-                break
+                Write-Host "[deploy-prod-app] revision activa OK: $($revision.name) provisioning=$provisioningState running=$runningState health=$healthState replicas=$replicas traffic=$trafficWeight active=$active"
+                return
             }
         }
 
-        if ($candidate) {
-            Write-Host "[deploy-uat-app] revision activa OK: $($candidate.Name) provisioning=$($candidate.ProvisioningState) running=$($candidate.RunningState) health=$($candidate.HealthState) replicas=$($candidate.Replicas) traffic=$($candidate.TrafficWeight) active=$($candidate.Active)"
-            return
-        }
-
-        Write-Host "[deploy-uat-app] esperando revision saludable $AppName ($attempt/24)..."
+        Write-Host "[deploy-prod-app] esperando revision saludable $AppName ($attempt/24)..."
         Start-Sleep -Seconds 10
     }
 
     az containerapp revision list --resource-group $Rg --name $AppName -o table
-    throw "[deploy-uat-app] $AppName no llego a revision saludable."
+    throw "[deploy-prod-app] $AppName no llego a revision saludable."
 }
 
 function Invoke-Smoke($Url, $Name, [switch]$ExpectJson) {
     $response = Invoke-WebRequest -UseBasicParsing -Uri $Url -TimeoutSec 30
     if ($response.Content -match "Your Azure Container Apps app is live") {
-        throw "[deploy-uat-app] Smoke $Name recibio contenedor demo de Microsoft."
+        throw "[deploy-prod-app] Smoke $Name recibio contenedor demo de Microsoft."
     }
     if ($Url -match "/api/" -and ($response.Content -match "^\s*<!doctype html" -or $response.Content -match "^\s*<html")) {
-        throw "[deploy-uat-app] Smoke $Name recibio HTML en una ruta API."
+        throw "[deploy-prod-app] Smoke $Name recibio HTML en una ruta API."
     }
     if ($ExpectJson) {
         $contentType = [string]$response.Headers["Content-Type"]
         if ($contentType -notmatch "^application/json\b") {
-            throw "[deploy-uat-app] Smoke $Name esperaba JSON y recibio '$contentType'."
+            throw "[deploy-prod-app] Smoke $Name esperaba JSON y recibio '$contentType'."
         }
     }
-    Write-Host "[deploy-uat-app] smoke OK: $Name status=$($response.StatusCode)"
+    Write-Host "[deploy-prod-app] smoke OK: $Name status=$($response.StatusCode)"
     return $response
 }
 
-Write-Host "[deploy-uat-app] validando herramientas..."
+Write-Host "[deploy-prod-app] validando herramientas..."
 Test-RequiredCommand az
 Test-RequiredCommand docker
 az account show --only-show-errors | Out-Null
-Assert-LastExitCode "[deploy-uat-app] Azure CLI no tiene sesion activa."
+Assert-LastExitCode "[deploy-prod-app] Azure CLI no tiene sesion activa."
 docker info | Out-Null
-Assert-LastExitCode "[deploy-uat-app] Docker no esta disponible."
+Assert-LastExitCode "[deploy-prod-app] Docker no esta disponible."
 
-$env:AZURE_EXTENSION_DIR = Join-Path $env:TEMP "azext-votometro-aca"
+$env:AZURE_EXTENSION_DIR = Join-Path $env:TEMP "azext-votometro-prod-aca"
 az config set extension.use_dynamic_install=yes_without_prompt --only-show-errors | Out-Null
 az config set extension.dynamic_install_allow_preview=true --only-show-errors | Out-Null
 az extension add --name containerapp --upgrade --only-show-errors | Out-Null
-Assert-LastExitCode "[deploy-uat-app] No se pudo validar/instalar extension containerapp."
+Assert-LastExitCode "[deploy-prod-app] No se pudo validar/instalar extension containerapp."
 
-$appName = if ($Component -eq "backend") { $ApiApp } else { $WebApp }
-$repository = if ($Component -eq "backend") { $ApiRepository } else { $WebRepository }
-$contextPath = if ($Component -eq "backend") { Join-Path $Root "votometro-backend" } else { Join-Path $Root "votometro-frontend" }
+$targets = if ($Component -eq "all") { @("backend", "frontend") } else { @($Component) }
 
 az group show --name $Rg --only-show-errors | Out-Null
-Assert-LastExitCode "[deploy-uat-app] No existe el resource group UAT $Rg. Ejecuta primero .\deploy-uat.ps1."
+Assert-LastExitCode "[deploy-prod-app] No existe el resource group $Rg."
 az acr show --name $Acr --resource-group $Rg --only-show-errors | Out-Null
-Assert-LastExitCode "[deploy-uat-app] No existe el ACR UAT $Acr. Ejecuta primero .\deploy-uat.ps1."
-az containerapp show --resource-group $Rg --name $appName --only-show-errors | Out-Null
-Assert-LastExitCode "[deploy-uat-app] No existe la Container App $appName. Ejecuta primero .\deploy-uat.ps1."
+Assert-LastExitCode "[deploy-prod-app] No existe el ACR $Acr."
 
-if ([string]::IsNullOrWhiteSpace($Tag)) {
-    $Tag = New-DefaultTag $Component
+foreach ($target in $targets) {
+    $appName = if ($target -eq "backend") { $ApiApp } else { $WebApp }
+    az containerapp show --resource-group $Rg --name $appName --only-show-errors | Out-Null
+    Assert-LastExitCode "[deploy-prod-app] No existe la Container App $appName."
 }
-
-$image = "$Acr.azurecr.io/$repository`:$Tag"
-Write-Host "[deploy-uat-app] component=$Component app=$appName image=$image"
 
 az acr login --name $Acr --only-show-errors | Out-Null
-Assert-LastExitCode "[deploy-uat-app] No se pudo autenticar contra ACR $Acr."
+Assert-LastExitCode "[deploy-prod-app] No se pudo autenticar contra ACR $Acr."
 
-if (-not $SkipBuild) {
-    Write-Host "[deploy-uat-app] construyendo imagen $Component..."
-    if ($Component -eq "backend") {
-        docker build -t $image $contextPath
-        Assert-LastExitCode "[deploy-uat-app] Fallo docker build backend."
-    } else {
-        $viteClient = Get-ConfigValue "VITE_AZURE_CLIENT_ID"
-        $viteTenant = Get-ConfigValue "VITE_AZURE_TENANT_ID"
-        if ([string]::IsNullOrWhiteSpace($viteClient) -or [string]::IsNullOrWhiteSpace($viteTenant)) {
-            throw "[deploy-uat-app] Faltan VITE_AZURE_CLIENT_ID o VITE_AZURE_TENANT_ID en .env/secrets/local.settings.json."
+foreach ($target in $targets) {
+    $repository = if ($target -eq "backend") { $ApiRepository } else { $WebRepository }
+    $contextPath = if ($target -eq "backend") { Join-Path $Root "votometro-backend" } else { Join-Path $Root "votometro-frontend" }
+    $resolvedTag = if ([string]::IsNullOrWhiteSpace($Tag)) { New-DefaultTag $target } else { $Tag }
+    $image = "$Acr.azurecr.io/$repository`:$resolvedTag"
+    $appName = if ($target -eq "backend") { $ApiApp } else { $WebApp }
+
+    Write-Host "[deploy-prod-app] component=$target app=$appName image=$image"
+
+    if (-not $SkipBuild) {
+        Write-Host "[deploy-prod-app] construyendo imagen $target..."
+        if ($target -eq "backend") {
+            docker build -t $image $contextPath
+            Assert-LastExitCode "[deploy-prod-app] Fallo docker build backend."
+        } else {
+            $viteClient = Get-ConfigValue "VITE_AZURE_CLIENT_ID"
+            $viteTenant = Get-ConfigValue "VITE_AZURE_TENANT_ID"
+            if ([string]::IsNullOrWhiteSpace($viteClient) -or [string]::IsNullOrWhiteSpace($viteTenant)) {
+                throw "[deploy-prod-app] Faltan VITE_AZURE_CLIENT_ID o VITE_AZURE_TENANT_ID en .env/secrets/local.settings.json."
+            }
+            docker build `
+                --build-arg VITE_BACKEND_URL=/api `
+                --build-arg VITE_AZURE_CLIENT_ID=$viteClient `
+                --build-arg VITE_AZURE_TENANT_ID=$viteTenant `
+                --build-arg VITE_LOCAL_AUTH_BYPASS=false `
+                -t $image `
+                $contextPath
+            Assert-LastExitCode "[deploy-prod-app] Fallo docker build frontend."
         }
-        docker build `
-            --build-arg VITE_BACKEND_URL=/api `
-            --build-arg VITE_AZURE_CLIENT_ID=$viteClient `
-            --build-arg VITE_AZURE_TENANT_ID=$viteTenant `
-            --build-arg VITE_LOCAL_AUTH_BYPASS=false `
-            -t $image `
-            $contextPath
-        Assert-LastExitCode "[deploy-uat-app] Fallo docker build frontend."
+
+        Write-Host "[deploy-prod-app] publicando imagen en ACR..."
+        docker push $image
+        Assert-LastExitCode "[deploy-prod-app] Fallo docker push $target."
+    } else {
+        Write-Host "[deploy-prod-app] SkipBuild activo: se asume que la imagen ya existe en ACR."
     }
 
-    Write-Host "[deploy-uat-app] publicando imagen en ACR..."
-    docker push $image
-    Assert-LastExitCode "[deploy-uat-app] Fallo docker push $Component."
-} else {
-    Write-Host "[deploy-uat-app] SkipBuild activo: se asume que la imagen ya existe en ACR."
-}
+    Write-Host "[deploy-prod-app] actualizando solo $appName..."
+    if ($target -eq "frontend") {
+        az containerapp update `
+            --resource-group $Rg `
+            --name $appName `
+            --image $image `
+            --set-env-vars "API_UPSTREAM=$ApiUpstream" "FRONTDOOR_ID=$FrontDoorId" "REQUIRE_FRONTDOOR=true" `
+            --only-show-errors `
+            --output none
+    } else {
+        az containerapp update `
+            --resource-group $Rg `
+            --name $appName `
+            --image $image `
+            --only-show-errors `
+            --output none
+    }
+    Assert-LastExitCode "[deploy-prod-app] Fallo update de $appName."
 
-Write-Host "[deploy-uat-app] actualizando solo $appName..."
-if ($Component -eq "frontend") {
-    az containerapp update `
-        --resource-group $Rg `
-        --name $appName `
-        --image $image `
-        --set-env-vars "API_UPSTREAM=$ApiUpstream" "FRONTDOOR_ID=$FrontDoorId" "REQUIRE_FRONTDOOR=true" `
-        --only-show-errors `
-        --output none
-} else {
-    az containerapp update `
-        --resource-group $Rg `
-        --name $appName `
-        --image $image `
-        --only-show-errors `
-        --output none
+    Wait-ContainerAppImage $appName $image
+    Wait-ContainerAppHealthy $appName
 }
-Assert-LastExitCode "[deploy-uat-app] Fallo update de $appName."
-
-Wait-ContainerAppImage $appName $image
-Wait-ContainerAppHealthy $appName
 
 if (-not $SkipSmoke) {
-    if ($Component -eq "frontend") {
+    if ($targets -contains "frontend") {
         Invoke-Smoke "$PublicWebUrl/" "frontend-home-frontdoor" | Out-Null
     }
 
     $health = Invoke-Smoke "$PublicWebUrl$ApiHealthPath" "backend-health-via-frontdoor" -ExpectJson
     if ($health.Content -notmatch "votometro-backend") {
-        throw "[deploy-uat-app] /api/health no parece provenir del backend real. Body=$($health.Content)"
+        throw "[deploy-prod-app] /api/health no parece provenir del backend real. Body=$($health.Content)"
     }
+
+    $directRootStatus = (curl.exe -sk -o NUL -w "%{http_code}" "https://ca-votometro-web-uat.whitesea-d6c244aa.eastus2.azurecontainerapps.io/")
+    if ($directRootStatus -ne "404") {
+        throw "[deploy-prod-app] El acceso directo al frontend ACA no esta bloqueado. Status=$directRootStatus"
+    }
+    Write-Host "[deploy-prod-app] smoke OK: direct-aca-blocked status=$directRootStatus"
 }
 
-Write-Host "[deploy-uat-app] deploy rapido completado."
+Write-Host "[deploy-prod-app] deploy productivo completado. No se ejecuto SQL ni migraciones."

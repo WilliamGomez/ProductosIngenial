@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PowerBIEmbed } from "powerbi-client-react";
 import { Embed, models, Report, service } from "powerbi-client";
 import "powerbi-report-authoring";
@@ -52,6 +52,7 @@ export const PowerBiReportEmbed = ({ reportId, productName }: PowerBiReportEmbed
   const lastRefreshAttemptAtRef = useRef(0);
   const activePageNameRef = useRef<string | null>(null);
   const pendingPageRestoreRef = useRef<string | null>(null);
+  const reportIdRef = useRef(reportId);
 
   const clearRefreshTimeout = useCallback(() => {
     if (refreshTimeoutRef.current) {
@@ -233,7 +234,7 @@ export const PowerBiReportEmbed = ({ reportId, productName }: PowerBiReportEmbed
     [productName]
   );
 
-  const [eventHandlersMap] = useState<Map<string, PowerBiEventHandler>>(
+  const eventHandlersMap = useMemo<Map<string, PowerBiEventHandler>>(
     () =>
       new Map<string, PowerBiEventHandler>([
         [
@@ -272,7 +273,8 @@ export const PowerBiReportEmbed = ({ reportId, productName }: PowerBiReportEmbed
             publishReportTelemetry(page?.displayName || page?.name);
           },
         ],
-      ])
+      ]),
+    [productName, publishReportTelemetry, refreshEmbedConfig, restorePendingPage]
   );
 
   useEffect(() => {
@@ -280,6 +282,19 @@ export const PowerBiReportEmbed = ({ reportId, productName }: PowerBiReportEmbed
     void refreshEmbedConfig("initial", true);
     return clearRefreshTimeout;
   }, [clearRefreshTimeout, refreshEmbedConfig, sessionToken]);
+
+  useEffect(() => {
+    if (reportIdRef.current === reportId) return;
+
+    reportIdRef.current = reportId;
+    clearRefreshTimeout();
+    reportRef.current = null;
+    activePageNameRef.current = null;
+    pendingPageRestoreRef.current = null;
+    refreshInFlightRef.current = false;
+    setEmbedConfig(null);
+    setEmbedKey((prev) => prev + 1);
+  }, [clearRefreshTimeout, reportId]);
 
   useEffect(() => {
     window.addEventListener("votometro:session-revoked", resetPowerBiReport);

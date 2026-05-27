@@ -36,3 +36,12 @@ class Product:
     amount_cop: Optional[float] = None
     zones: List[UserZone] = field(default_factory=list)
     id: Optional[int] = None
+    display_name: Optional[str] = None
+    route_path: Optional[str] = None
+    powerbi_report_id: Optional[str] = None
+    powerbi_workspace_id: Optional[str] = None
+    powerbi_tenant_id: Optional[str] = None
+    icon: Optional[str] = None
+    display_order: int = 100
+    is_report_enabled: bool = True
+    description: Optional[str] = None

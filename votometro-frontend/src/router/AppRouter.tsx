@@ -1,29 +1,150 @@
-import { type RouteObject, RouterProvider, createBrowserRouter, Navigate } from "react-router-dom";
-import { Suspense, lazy, useMemo } from "react";
+import {
+  type RouteObject,
+  RouterProvider,
+  createBrowserRouter,
+  Navigate,
+} from "react-router-dom";
+import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { useAuth } from "../hooks/useAuth";
+import { useAccessToken } from "../hooks/useAccessToken";
 import { useSession } from "../context/SessionContext";
 import { Spinner } from "../components/ui/Spinner";
 import MainLayout from "../layouts/MainLayout";
 import { isProductActive } from "../utils/productStatus";
+import {
+  getProductReportCatalog,
+  type IProductReportCatalogItem,
+} from "../services/api";
 
 // Lazy-loaded pages
 const Login = lazy(() => import("../pages/Login"));
 const MfaGate = lazy(() => import("../pages/MfaGate"));
-const Votometro = lazy(() => import("../pages/Votometro"));
-const AudiVoto = lazy(() => import("../pages/Audivoto"));
+const ProductReportPage = lazy(() => import("../pages/ProductReportPage"));
+const ProductCatalogAdmin = lazy(() => import("../pages/ProductCatalogAdmin"));
 const UserAdmin = lazy(() => import("../pages/UsersAdmin"));
 const UserDetail = lazy(() => import("../pages/UserDetail"));
 const UserEdit = lazy(() => import("../pages/UserEdit"));
 const SessionsAdmin = lazy(() => import("../pages/SessionsAdmin"));
-const SessionAnalyticsDashboard = lazy(() => import("../pages/SessionAnalyticsDashboard"));
+const SessionAnalyticsDashboard = lazy(
+  () => import("../pages/SessionAnalyticsDashboard"),
+);
 const RolesMatrix = lazy(() => import("../pages/RolesMatrix"));
 const ResetPasswordAdmin = lazy(() => import("../pages/ResetPasswordAdmin"));
 const DivipolaUpload = lazy(() => import("../pages/DivipolaUpload"));
 
 export const AppRouter = () => {
-  const { isAuthenticated, userRole, userProducts, isLoadingProducts, isMsalLoading } = useAuth();
+  const {
+    isAuthenticated,
+    userRole,
+    userProducts,
+    isLoadingProducts,
+    isMsalLoading,
+  } = useAuth();
   const { user, mfaVerified, sessionToken, logoutAndCleanup } = useSession();
-  const hasProduct = (name: string) => userProducts?.some((p) => p.name.toLowerCase() === name.toLowerCase() && isProductActive(p));
+  const { getToken } = useAccessToken();
+  const [productCatalog, setProductCatalog] = useState<
+    IProductReportCatalogItem[]
+  >([]);
+  const [productCatalogLoading, setProductCatalogLoading] = useState(false);
+
+  useEffect(() => {
+    if (
+      !isAuthenticated ||
+      userRole !== "Admin" ||
+      !sessionToken ||
+      !mfaVerified
+    ) {
+      setProductCatalogLoading(false);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      setProductCatalogLoading(true);
+      try {
+        const token = await getToken();
+        const catalog = await getProductReportCatalog(token, true);
+        if (!cancelled) setProductCatalog(catalog);
+      } catch (error) {
+        console.warn(
+          "[AppRouter] product catalog unavailable; using assigned products only",
+          error,
+        );
+      } finally {
+        if (!cancelled) setProductCatalogLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [getToken, isAuthenticated, mfaVerified, sessionToken, userRole]);
+
+  const reportRoutes = useMemo(() => {
+    const fallbackReports: IProductReportCatalogItem[] = [
+      {
+        id: 1,
+        name: "Votometro",
+        display_name: "Votometro",
+        route_path: "/votometro",
+        powerbi_report_id: "9db4c8ee-d117-4a2e-9a72-9284c6208fa0",
+        display_order: 10,
+        is_report_enabled: true,
+        icon: "Archive",
+      },
+      {
+        id: 2,
+        name: "Audivoto",
+        display_name: "Audivoto",
+        route_path: "/audivoto",
+        powerbi_report_id: "f88c2708-aa49-449a-974a-8e7f7ee972fb",
+        display_order: 20,
+        is_report_enabled: true,
+        icon: "Binoculars",
+      },
+    ];
+
+    if (userRole === "Admin") {
+      const source =
+        productCatalog.length > 0 ? productCatalog : fallbackReports;
+      return source
+        .filter(
+          (product) =>
+            product.is_report_enabled &&
+            product.route_path &&
+            product.powerbi_report_id,
+        )
+        .sort((a, b) => (a.display_order ?? 100) - (b.display_order ?? 100));
+    }
+
+    return (userProducts ?? [])
+      .map((product) => {
+        const fallback = fallbackReports.find(
+          (item) => item.name.toLowerCase() === product.name.toLowerCase(),
+        );
+        return {
+          ...fallback,
+          ...product,
+          display_name:
+            product.display_name || fallback?.display_name || product.name,
+          route_path:
+            product.route_path ||
+            fallback?.route_path ||
+            `/${product.name.toLowerCase()}`,
+          powerbi_report_id:
+            product.powerbi_report_id || fallback?.powerbi_report_id || "",
+          display_order:
+            product.display_order ?? fallback?.display_order ?? 100,
+          is_report_enabled:
+            product.is_report_enabled ?? fallback?.is_report_enabled ?? true,
+        };
+      })
+      .filter(
+        (product) =>
+          isProductActive(product) &&
+          product.is_report_enabled &&
+          product.powerbi_report_id,
+      )
+      .sort((a, b) => (a.display_order ?? 100) - (b.display_order ?? 100));
+  }, [productCatalog, userProducts, userRole]);
 
   const routes: RouteObject[] = useMemo(() => {
     // Wait for MSAL to finish initializing before deciding routes
@@ -40,7 +161,7 @@ export const AppRouter = () => {
     if (!isAuthenticated) {
       return [
         { path: "/login", element: <Login /> },
-        { path: "*", element: <Navigate to='/login' replace /> },
+        { path: "*", element: <Navigate to="/login" replace /> },
       ];
     }
 
@@ -70,13 +191,19 @@ export const AppRouter = () => {
                   No se pudo cargar la informacion de la plataforma
                 </h1>
                 <p className="mt-3 text-sm leading-6 text-slate-600">
-                  Microsoft autentico la cuenta, pero la sesion interna del aplicativo no quedo activa.
-                  Cierra la sesion y vuelve a ingresar para recrearla.
+                  Microsoft autentico la cuenta, pero la sesion interna del
+                  aplicativo no quedo activa. Cierra la sesion y vuelve a
+                  ingresar para recrearla.
                 </p>
                 <button
                   type="button"
                   className="mt-5 inline-flex h-10 items-center justify-center rounded-lg bg-brand-600 px-4 text-sm font-semibold text-white transition-colors hover:bg-brand-700"
-                  onClick={() => void logoutAndCleanup({ invalidateOnServer: false, triggerMsalLogout: true })}
+                  onClick={() =>
+                    void logoutAndCleanup({
+                      invalidateOnServer: false,
+                      triggerMsalLogout: true,
+                    })
+                  }
                 >
                   Cerrar sesion y reintentar
                 </button>
@@ -87,7 +214,7 @@ export const AppRouter = () => {
       ];
     }
 
-    if (isLoadingProducts || user === null) {
+    if (isLoadingProducts || user === null || productCatalogLoading) {
       return [
         {
           path: "*",
@@ -102,25 +229,15 @@ export const AppRouter = () => {
 
     const protectedRoutes: RouteObject[] = [];
 
-    // Admin users get access to ALL product routes regardless of assignment
-    // Non-admin users only get routes for assigned products
-    if (userRole === "Admin" || hasProduct("Votometro")) {
+    for (const product of reportRoutes) {
+      const routePath = product.route_path?.startsWith("/")
+        ? product.route_path
+        : `/${product.route_path}`;
       protectedRoutes.push({
-        path: "/votometro",
+        path: routePath,
         element: (
           <MainLayout>
-            <Votometro />
-          </MainLayout>
-        ),
-      });
-    }
-
-    if (userRole === "Admin" || hasProduct("Audivoto")) {
-      protectedRoutes.push({
-        path: "/audivoto",
-        element: (
-          <MainLayout>
-            <AudiVoto />
+            <ProductReportPage productOverride={product} />
           </MainLayout>
         ),
       });
@@ -182,6 +299,14 @@ export const AppRouter = () => {
         },
         // RBAC dinámico — gestión de roles y permisos granulares.
         {
+          path: "/admin/products",
+          element: (
+            <MainLayout>
+              <ProductCatalogAdmin />
+            </MainLayout>
+          ),
+        },
+        {
           path: "/admin/roles",
           element: (
             <MainLayout>
@@ -213,12 +338,15 @@ export const AppRouter = () => {
               <SessionAnalyticsDashboard />
             </MainLayout>
           ),
-        }
+        },
       );
     }
 
     // Default redirect: first available route (product routes come first for better UX)
-    const defaultPath: string = protectedRoutes.length > 0 && protectedRoutes[0].path ? protectedRoutes[0].path : "/login";
+    const defaultPath: string =
+      protectedRoutes.length > 0 && protectedRoutes[0].path
+        ? protectedRoutes[0].path
+        : "/login";
 
     protectedRoutes.push({
       path: "*",
@@ -226,7 +354,19 @@ export const AppRouter = () => {
     });
 
     return protectedRoutes;
-  }, [isAuthenticated, isLoadingProducts, userProducts, userRole, user, mfaVerified, sessionToken, isMsalLoading, logoutAndCleanup]);
+  }, [
+    isAuthenticated,
+    isLoadingProducts,
+    productCatalogLoading,
+    reportRoutes,
+    userProducts,
+    userRole,
+    user,
+    mfaVerified,
+    sessionToken,
+    isMsalLoading,
+    logoutAndCleanup,
+  ]);
 
   const router = useMemo(() => createBrowserRouter(routes), [routes]);
 

@@ -31,6 +31,7 @@ from use_cases.get_user import GetUserUseCase
 from use_cases.list_users import ListUsersUseCase
 from use_cases.update_user import UpdateUserUseCase
 from use_cases.upsert_user_products import UpdateUserProductsUseCase
+from use_cases.reset_password import ResetPasswordUseCase
 
 
 users_bp = func.Blueprint()
@@ -204,19 +205,30 @@ def update_user(req: func.HttpRequest) -> func.HttpResponse:
             mimetype=MIMETYPE,
         )
     try:
+        if not user_id:
+            return _json_response({"error": "user_id is required"}, HTTPStatus.BAD_REQUEST)
+
+        sql_repo = UserSqlAdapter()
+        current_user = sql_repo.get_user(user_id)
+        if not current_user:
+            return _json_response({"error": "User not found"}, HTTPStatus.NOT_FOUND)
+
         user = User(
             id=user_id,
-            email=data.get("email"),
-            display_name=data.get("display_name"),
-            type_person=data.get("type_person"),
-            type_dni=data.get("type_dni"),
-            identity_document=data.get("identity_document"),
-            reference=data.get("reference"),
-            reference2=data.get("reference2"),
-            personal_email=data.get("personal_email"),
-            enable=data.get("enable"),
-            phone=data.get("phone"),
-            role=data.get("role"),
+            # Email/UPN is identity data. Preserve the stored value even if a
+            # stale or manipulated client payload includes a different email.
+            email=current_user.get("email"),
+            department=current_user.get("department") or "IngenialAI",
+            display_name=data.get("display_name", current_user.get("display_name")),
+            type_person=data.get("type_person", current_user.get("type_person")),
+            type_dni=data.get("type_dni", current_user.get("type_dni")),
+            identity_document=data.get("identity_document", current_user.get("identity_document")),
+            reference=data.get("reference", current_user.get("reference")),
+            reference2=data.get("reference2", current_user.get("reference2")),
+            personal_email=data.get("personal_email", current_user.get("personal_email")),
+            enable=data.get("enable", current_user.get("enable")),
+            phone=data.get("phone", current_user.get("phone")),
+            role=data.get("role", current_user.get("role")),
         )
 
         # `zones` puede no venir → None (no se tocan asignaciones existentes)
@@ -224,7 +236,7 @@ def update_user(req: func.HttpRequest) -> func.HttpResponse:
         zones = data.get("zones") if "zones" in data else None
 
         use_case = UpdateUserUseCase(
-            UserGraphAdapter(), UserSqlAdapter(), UserZonesSqlAdapter()
+            UserGraphAdapter(), sql_repo, UserZonesSqlAdapter()
         )
         use_case.execute(user, zones=zones)
 
@@ -243,6 +255,54 @@ def update_user(req: func.HttpRequest) -> func.HttpResponse:
     except Exception as error:
         logging.exception("UpdateUser failed")
         return _json_response({"error": "Update user failed"}, HTTPStatus.INTERNAL_SERVER_ERROR)
+
+
+# ---------------------------------------------------------------------------
+# POST /api/user/{user_id}/reset-password — restablecer contrasena (Admin)
+# ---------------------------------------------------------------------------
+@users_bp.function_name(name="ResetUserPassword")
+@users_bp.route(
+    route="user/{user_id}/reset-password",
+    methods=["POST"],
+    auth_level=func.AuthLevel.ANONYMOUS,
+)
+def reset_user_password(req: func.HttpRequest) -> func.HttpResponse:
+    """Solo Admin puede restablecer la contrasena de otro usuario.
+    Body: { "new_password": "...", "force_change_next_signin": true }
+    """
+    user_id = req.route_params.get("user_id")
+    try:
+        caller = _require_admin(req)
+    except PermissionError as error:
+        return _auth_error(error)
+
+    if not user_id:
+        return _json_response({"error": "user_id is required"}, HTTPStatus.BAD_REQUEST)
+
+    try:
+        data = req.get_json()
+    except ValueError:
+        return _json_response({"error": "Invalid JSON body"}, HTTPStatus.BAD_REQUEST)
+
+    new_password = (data or {}).get("new_password", "")
+    force_change = (data or {}).get("force_change_next_signin", True)
+
+    if not new_password:
+        return _json_response({"error": "new_password is required"}, HTTPStatus.BAD_REQUEST)
+
+    try:
+        ResetPasswordUseCase(UserGraphAdapter()).execute(
+            user_id=user_id,
+            new_password=new_password,
+            force_change_next_signin=bool(force_change),
+        )
+        logging.info("ResetUserPassword: user_id=%s reset by admin=%s", user_id, caller.get("id"))
+        return func.HttpResponse(status_code=HTTPStatus.NO_CONTENT, mimetype=MIMETYPE)
+    except ValueError as verr:
+        return _json_response({"error": str(verr)}, HTTPStatus.BAD_REQUEST)
+    except Exception:
+        logging.exception("ResetUserPassword failed for user_id=%s", user_id)
+        return _json_response({"error": "No se pudo restablecer la contrasena."}, HTTPStatus.INTERNAL_SERVER_ERROR)
 
 
 # ---------------------------------------------------------------------------

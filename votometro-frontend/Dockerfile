@@ -115,8 +115,10 @@ RUN rm -f /etc/nginx/conf.d/default.conf \
 # Config hardening (CSP, HSTS, headers, listen 8080).
 # Se instala como template para poder cambiar solo el upstream interno de /api
 # entre Docker local y Azure Container Apps sin recompilar codigo.
-ENV API_UPSTREAM=https://ca-votometro-api-uat.internal.whitesea-d6c244aa.eastus2.azurecontainerapps.io \
-    NGINX_ENVSUBST_FILTER=^API_UPSTREAM$
+ENV API_UPSTREAM=${API_UPSTREAM:-http://localhost:7071} \
+    FRONTDOOR_ID=${FRONTDOOR_ID:-} \
+    REQUIRE_FRONTDOOR=${REQUIRE_FRONTDOOR:-false} \
+    NGINX_ENVSUBST_FILTER='^(API_UPSTREAM|FRONTDOOR_ID|REQUIRE_FRONTDOOR)$'
 COPY --chown=101:101 nginx.conf /etc/nginx/templates/default.conf.template
 
 # Activos estáticos del stage builder.

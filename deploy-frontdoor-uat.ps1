@@ -28,7 +28,7 @@ $OriginGroup = "og-votometro-web-uat"
 $Origin = "origin-aca-web-uat"
 $Route = "route-votometro-web-uat"
 $CustomDomain = "plataformas-ingenial-ia-com"
-$WafPolicy = "waf-votometro-uat"
+$WafPolicy = "wafvotometrouat"
 $SecurityPolicy = "sp-votometro-uat"
 
 function Assert-LastExitCode($Message) {
@@ -53,8 +53,14 @@ function Invoke-AzJson($Arguments) {
 }
 
 function Test-AzResourceExists($Arguments) {
-    & az @Arguments --only-show-errors --output none 2>$null
-    return ($LASTEXITCODE -eq 0)
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & az @Arguments --only-show-errors --output none 2>&1 | Out-Null
+        return ($LASTEXITCODE -eq 0)
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
 }
 
 function Register-Provider($Namespace) {
@@ -84,126 +90,108 @@ function Get-ContainerApp($Name) {
 }
 
 function Ensure-WafPolicy {
-    if (-not (Test-AzResourceExists @("network", "front-door", "waf-policy", "show", "--resource-group", $Rg, "--name", $WafPolicy))) {
-        Write-Host "[frontdoor-uat] creando WAF policy $WafPolicy..."
-        az network front-door waf-policy create `
-            --resource-group $Rg `
-            --name $WafPolicy `
-            --sku Premium_AzureFrontDoor `
-            --mode Prevention `
-            --enabled-state Enabled `
-            --request-body-check Enabled `
-            --custom-block-response-status-code 429 `
-            --only-show-errors `
-            --output none
-        Assert-LastExitCode "[frontdoor-uat] No se pudo crear WAF policy."
-    } else {
-        Write-Host "[frontdoor-uat] WAF policy existente: $WafPolicy"
-        az network front-door waf-policy update `
-            --resource-group $Rg `
-            --name $WafPolicy `
-            --mode Prevention `
-            --enabled-state Enabled `
-            --request-body-check Enabled `
-            --custom-block-response-status-code 429 `
-            --only-show-errors `
-            --output none
-        Assert-LastExitCode "[frontdoor-uat] No se pudo actualizar WAF policy."
-    }
+    Write-Host "[frontdoor-uat] creando/actualizando WAF policy $WafPolicy via ARM REST..."
 
-    $policyId = az network front-door waf-policy show --resource-group $Rg --name $WafPolicy --query id -o tsv
-    Assert-LastExitCode "[frontdoor-uat] No se pudo obtener WAF policy id."
-
-    Write-Host "[frontdoor-uat] configurando OWASP managed rules..."
-    az network front-door waf-policy managed-rules add `
-        --resource-group $Rg `
-        --policy-name $WafPolicy `
-        --type Microsoft_DefaultRuleSet `
-        --version 2.2 `
-        --action Block `
-        --only-show-errors `
-        --output none 2>$null
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "[frontdoor-uat] Microsoft_DefaultRuleSet 2.2 ya existe o no fue aceptado por CLI; continuando."
-    }
-
-    az network front-door waf-policy managed-rules add `
-        --resource-group $Rg `
-        --policy-name $WafPolicy `
-        --type Microsoft_BotManagerRuleSet `
-        --version 1.1 `
-        --action Block `
-        --only-show-errors `
-        --output none 2>$null
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "[frontdoor-uat] BotManager 1.1 no disponible o ya agregado; probando 1.0..."
-        az network front-door waf-policy managed-rules add `
-            --resource-group $Rg `
-            --policy-name $WafPolicy `
-            --type Microsoft_BotManagerRuleSet `
-            --version 1.0 `
-            --action Block `
-            --only-show-errors `
-            --output none 2>$null
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "[frontdoor-uat] BotManager no agregado; WAF conserva OWASP y custom rules."
+    $policyId = "/subscriptions/$SubscriptionId/resourceGroups/$Rg/providers/Microsoft.Network/frontdoorWebApplicationFirewallPolicies/$WafPolicy"
+    $wafPayload = @{
+        location = "Global"
+        sku = @{
+            name = "Premium_AzureFrontDoor"
+        }
+        properties = @{
+            policySettings = @{
+                enabledState = "Enabled"
+                mode = "Prevention"
+                requestBodyCheck = "Enabled"
+                customBlockResponseStatusCode = 429
+            }
+            customRules = @{
+                rules = @(
+                    @{
+                        name = "RateLimitPerIp"
+                        enabledState = "Enabled"
+                        priority = 100
+                        ruleType = "RateLimitRule"
+                        rateLimitDurationInMinutes = 1
+                        rateLimitThreshold = 300
+                        matchConditions = @(
+                            @{
+                                matchVariable = "RequestUri"
+                                operator = "BeginsWith"
+                                negateCondition = $false
+                                matchValue = @("/")
+                                transforms = @()
+                            }
+                        )
+                        action = "Block"
+                    },
+                    @{
+                        name = "RateLimitSessionApi"
+                        enabledState = "Enabled"
+                        priority = 110
+                        ruleType = "RateLimitRule"
+                        rateLimitDurationInMinutes = 1
+                        rateLimitThreshold = 30
+                        matchConditions = @(
+                            @{
+                                matchVariable = "RequestUri"
+                                operator = "Contains"
+                                negateCondition = $false
+                                matchValue = @("/api/session")
+                                transforms = @("Lowercase")
+                            }
+                        )
+                        action = "Block"
+                    },
+                    @{
+                        name = "BlockScannerUserAgents"
+                        enabledState = "Enabled"
+                        priority = 120
+                        ruleType = "MatchRule"
+                        matchConditions = @(
+                            @{
+                                matchVariable = "RequestHeader"
+                                selector = "User-Agent"
+                                operator = "RegEx"
+                                negateCondition = $false
+                                matchValue = @(".*(sqlmap|nikto|nmap|acunetix|nessus|dirbuster|gobuster|wpscan).*")
+                                transforms = @("Lowercase")
+                            }
+                        )
+                        action = "Block"
+                    }
+                )
+            }
+            managedRules = @{
+                managedRuleSets = @(
+                    @{
+                        ruleSetType = "Microsoft_DefaultRuleSet"
+                        ruleSetVersion = "2.1"
+                        ruleSetAction = "Block"
+                    },
+                    @{
+                        ruleSetType = "Microsoft_BotManagerRuleSet"
+                        ruleSetVersion = "1.0"
+                        ruleSetAction = "Block"
+                    }
+                )
+            }
         }
     }
 
-    Write-Host "[frontdoor-uat] configurando rate limiting global..."
-    az network front-door waf-policy rule create `
-        --resource-group $Rg `
-        --policy-name $WafPolicy `
-        --name RateLimitPerIp `
-        --priority 100 `
-        --rule-type RateLimitRule `
-        --rate-limit-duration 1 `
-        --rate-limit-threshold 300 `
-        --action Block `
-        --match-variable RequestUri `
-        --operator Any `
-        --only-show-errors `
-        --output none 2>$null
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "[frontdoor-uat] RateLimitPerIp ya existe o CLI no permitio recrearlo; continuando."
-    }
+    $payloadPath = Join-Path $env:TEMP "votometro-waf-policy-$([guid]::NewGuid().ToString('N')).json"
+    $wafPayload | ConvertTo-Json -Depth 20 | Set-Content -Path $payloadPath -Encoding UTF8
 
-    Write-Host "[frontdoor-uat] configurando rate limiting para /api/session..."
-    az network front-door waf-policy rule create `
-        --resource-group $Rg `
-        --policy-name $WafPolicy `
-        --name RateLimitSessionApi `
-        --priority 110 `
-        --rule-type RateLimitRule `
-        --rate-limit-duration 1 `
-        --rate-limit-threshold 30 `
-        --action Block `
-        --match-variable RequestUri `
-        --operator Contains `
-        --values "/api/session" `
-        --transforms Lowercase `
-        --only-show-errors `
-        --output none 2>$null
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "[frontdoor-uat] RateLimitSessionApi ya existe o CLI no permitio recrearlo; continuando."
-    }
-
-    Write-Host "[frontdoor-uat] configurando bloqueo basico anti-scanner..."
-    az network front-door waf-policy rule create `
-        --resource-group $Rg `
-        --policy-name $WafPolicy `
-        --name BlockScannerUserAgents `
-        --priority 120 `
-        --rule-type MatchRule `
-        --action Block `
-        --match-variable RequestHeader.User-Agent `
-        --operator RegEx `
-        --values ".*(sqlmap|nikto|nmap|acunetix|nessus|dirbuster|gobuster|wpscan).*" `
-        --transforms Lowercase `
-        --only-show-errors `
-        --output none 2>$null
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "[frontdoor-uat] BlockScannerUserAgents ya existe o CLI no permitio recrearlo; continuando."
+    try {
+        az rest `
+            --method put `
+            --url "https://management.azure.com$($policyId)?api-version=2022-05-01" `
+            --body "@$payloadPath" `
+            --only-show-errors `
+            --output none
+        Assert-LastExitCode "[frontdoor-uat] No se pudo crear/actualizar WAF policy via ARM REST."
+    } finally {
+        Remove-Item -LiteralPath $payloadPath -Force -ErrorAction SilentlyContinue
     }
 
     return $policyId
@@ -231,7 +219,19 @@ function Ensure-EntraRedirectUris {
 
     if ($changed) {
         Write-Host "[frontdoor-uat] actualizando redirect URIs SPA de Entra ID..."
-        az ad app update --id $FrontendAppRegistrationClientId --spa-redirect-uris $merged --only-show-errors --output none
+        $appObjectId = $app.id
+        $tempJson = [System.IO.Path]::GetTempFileName() + ".json"
+        @{ spa = @{ redirectUris = $merged } } | ConvertTo-Json -Compress | Set-Content -Path $tempJson -Encoding UTF8
+        try {
+            az rest --method PATCH `
+                --url "https://graph.microsoft.com/v1.0/applications/$appObjectId" `
+                --body "@$tempJson" `
+                --headers "Content-Type=application/json" `
+                --only-show-errors `
+                --output none
+        } finally {
+            Remove-Item -Path $tempJson -Force -ErrorAction SilentlyContinue
+        }
         Assert-LastExitCode "[frontdoor-uat] No se pudieron actualizar redirect URIs SPA."
     } else {
         Write-Host "[frontdoor-uat] redirect URIs SPA ya contienen $PublicUrl"
@@ -380,11 +380,23 @@ if (-not (Test-AzResourceExists @("afd", "custom-domain", "show", "--resource-gr
 }
 
 $customDomainInfo = Invoke-AzJson @("afd", "custom-domain", "show", "--resource-group", $Rg, "--profile-name", $AfdProfile, "--custom-domain-name", $CustomDomain)
-$validationToken = [string]$customDomainInfo.properties.validationProperties.validationToken
+$validationToken = [string]$customDomainInfo.validationProperties.validationToken
+if ([string]::IsNullOrWhiteSpace($validationToken)) {
+    $validationToken = [string]$customDomainInfo.properties.validationProperties.validationToken
+}
+$domainValidationState = [string]$customDomainInfo.domainValidationState
+if ([string]::IsNullOrWhiteSpace($domainValidationState)) {
+    $domainValidationState = [string]$customDomainInfo.properties.domainValidationState
+}
+$domainDeploymentStatus = [string]$customDomainInfo.deploymentStatus
+if ([string]::IsNullOrWhiteSpace($domainDeploymentStatus)) {
+    $domainDeploymentStatus = [string]$customDomainInfo.properties.deploymentStatus
+}
 $customDomainId = [string]$customDomainInfo.id
 $endpointId = az afd endpoint show --resource-group $Rg --profile-name $AfdProfile --endpoint-name $AfdEndpoint --query id -o tsv
 
 Write-Host ""
+Write-Host "[frontdoor-uat] Estado dominio custom: validation=$domainValidationState deployment=$domainDeploymentStatus"
 Write-Host "[frontdoor-uat] DNS requerido:"
 Write-Host "  CNAME $PublicHostName -> $endpointHostName"
 if (-not [string]::IsNullOrWhiteSpace($validationToken)) {
@@ -449,16 +461,65 @@ if ($canAssociateCustomDomain) {
         --output none
     Assert-LastExitCode "[frontdoor-uat] No se pudo asociar custom domain a route."
 
-    az afd security-policy create `
-        --resource-group $Rg `
-        --profile-name $AfdProfile `
-        --security-policy-name "$SecurityPolicy-custom" `
-        --domains $customDomainId `
-        --waf-policy $wafPolicyId `
-        --only-show-errors `
-        --output none 2>$null
-    if ($LASTEXITCODE -ne 0) {
+    try {
+        az afd security-policy create `
+            --resource-group $Rg `
+            --profile-name $AfdProfile `
+            --security-policy-name "$SecurityPolicy-custom" `
+            --domains $customDomainId `
+            --waf-policy $wafPolicyId `
+            --only-show-errors `
+            --output none 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "[frontdoor-uat] security policy custom domain ya existe o no pudo recrearse; continuando."
+        }
+    } catch {
         Write-Host "[frontdoor-uat] security policy custom domain ya existe o no pudo recrearse; continuando."
+    }
+}
+
+$routeInfo = Invoke-AzJson @("afd", "route", "show", "--resource-group", $Rg, "--profile-name", $AfdProfile, "--endpoint-name", $AfdEndpoint, "--route-name", $Route)
+$customDomainRouteState = "not-associated"
+foreach ($domain in @($routeInfo.customDomains)) {
+    if ($domain.id -eq $customDomainId) {
+        $customDomainRouteState = "associated-isActive-$($domain.isActive)"
+    }
+}
+Write-Host "[frontdoor-uat] Estado route custom domain: $customDomainRouteState"
+
+$customDomainInfo = Invoke-AzJson @("afd", "custom-domain", "show", "--resource-group", $Rg, "--profile-name", $AfdProfile, "--custom-domain-name", $CustomDomain)
+$domainValidationState = [string]$customDomainInfo.domainValidationState
+if ([string]::IsNullOrWhiteSpace($domainValidationState)) {
+    $domainValidationState = [string]$customDomainInfo.properties.domainValidationState
+}
+if ($domainValidationState -ne "Approved") {
+    Write-Host "[frontdoor-uat] Dominio custom aun no aprobado por Azure Front Door. Mientras este en '$domainValidationState', $PublicUrl puede mostrar 'Page not found'."
+    Write-Host "[frontdoor-uat] Espera propagacion/validacion y vuelve a ejecutar este script."
+} else {
+    $domainDeploymentStatus = [string]$customDomainInfo.deploymentStatus
+    if ([string]::IsNullOrWhiteSpace($domainDeploymentStatus)) {
+        $domainDeploymentStatus = [string]$customDomainInfo.properties.deploymentStatus
+    }
+
+    if ($domainDeploymentStatus -ne "Succeeded") {
+        Write-Host "[frontdoor-uat] dominio aprobado; esperando publicacion del certificado/ruta en Front Door..."
+        for ($i = 1; $i -le 30; $i++) {
+            $customDomainInfo = Invoke-AzJson @("afd", "custom-domain", "show", "--resource-group", $Rg, "--profile-name", $AfdProfile, "--custom-domain-name", $CustomDomain)
+            $domainDeploymentStatus = [string]$customDomainInfo.deploymentStatus
+            if ([string]::IsNullOrWhiteSpace($domainDeploymentStatus)) {
+                $domainDeploymentStatus = [string]$customDomainInfo.properties.deploymentStatus
+            }
+
+            Write-Host "[frontdoor-uat] esperando deployment custom domain ($i/30): $domainDeploymentStatus"
+            if ($domainDeploymentStatus -eq "Succeeded") {
+                break
+            }
+            Start-Sleep -Seconds 30
+        }
+
+        if ($domainDeploymentStatus -ne "Succeeded") {
+            throw "[frontdoor-uat] El dominio custom esta aprobado, pero Front Door no termino de publicarlo. Estado=$domainDeploymentStatus"
+        }
     }
 }
 

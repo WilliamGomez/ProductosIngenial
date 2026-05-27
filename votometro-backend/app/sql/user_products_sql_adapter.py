@@ -29,6 +29,7 @@ class UserProductsSqlAdapter:
         cursor = self.connection.cursor()
 
         try:
+            submitted_names = [product.name for product in products]
             for product in products:
                 user_product_id = self._upsert_product(cursor, user_id_str, product)
 
@@ -60,6 +61,7 @@ class UserProductsSqlAdapter:
                         rows,
                     )
 
+            self._disable_omitted_products(cursor, user_id_str, submitted_names)
             self.connection.commit()
 
         except Exception as exc:
@@ -102,6 +104,38 @@ class UserProductsSqlAdapter:
             return bool(row and row[0])
         finally:
             cursor.close()
+
+    def _disable_omitted_products(
+        self, cursor: pyodbc.Cursor, user_id: str, submitted_names: List[str]
+    ) -> None:
+        """Disable user-product relations not present in the desired payload."""
+        if not submitted_names:
+            cursor.execute(
+                """
+                UPDATE dbo.User_Products
+                SET enable = 0,
+                    updated_at = SYSUTCDATETIME()
+                WHERE user_id = ? AND enable = 1;
+                """,
+                user_id,
+            )
+            return
+
+        placeholders = ",".join("?" for _ in submitted_names)
+        cursor.execute(
+            f"""
+            UPDATE up
+            SET enable = 0,
+                updated_at = SYSUTCDATETIME()
+            FROM dbo.User_Products up
+            INNER JOIN dbo.Products p ON p.id = up.product_id
+            WHERE up.user_id = ?
+              AND up.enable = 1
+              AND p.name NOT IN ({placeholders});
+            """,
+            user_id,
+            *submitted_names,
+        )
 
     def _expire_elapsed_products(self, cursor: pyodbc.Cursor) -> None:
         cursor.execute(
@@ -226,6 +260,15 @@ class UserProductsSqlAdapter:
                     up.expiration,
                     up.amount_cop,
                     up.enable,
+                    p.display_name,
+                    p.route_path,
+                    CONVERT(NVARCHAR(36), p.powerbi_report_id) AS powerbi_report_id,
+                    CONVERT(NVARCHAR(36), p.powerbi_workspace_id) AS powerbi_workspace_id,
+                    CONVERT(NVARCHAR(36), p.powerbi_tenant_id) AS powerbi_tenant_id,
+                    p.icon,
+                    p.display_order,
+                    COALESCE(p.is_report_enabled, 1) AS is_report_enabled,
+                    p.description,
                     (
                         SELECT uz.cod_dep, uz.cod_mun, uz.enable
                         FROM dbo.User_Zones uz
@@ -252,6 +295,15 @@ class UserProductsSqlAdapter:
                     expiration,
                     amount_cop,
                     enable,
+                    display_name,
+                    route_path,
+                    powerbi_report_id,
+                    powerbi_workspace_id,
+                    powerbi_tenant_id,
+                    icon,
+                    display_order,
+                    is_report_enabled,
+                    description,
                     zones_json,
                 ) = row
 
@@ -281,6 +333,15 @@ class UserProductsSqlAdapter:
                         amount_cop=float(amount_cop) if amount_cop else 0,
                         enable=bool(enable),
                         zones=zones,
+                        display_name=display_name,
+                        route_path=route_path,
+                        powerbi_report_id=powerbi_report_id,
+                        powerbi_workspace_id=powerbi_workspace_id,
+                        powerbi_tenant_id=powerbi_tenant_id,
+                        icon=icon,
+                        display_order=int(display_order or 100),
+                        is_report_enabled=bool(is_report_enabled),
+                        description=description,
                     )
                 )
 

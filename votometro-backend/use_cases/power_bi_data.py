@@ -1,8 +1,9 @@
 """Power BI use cases.
 
 The public path is execute_for_user(), which issues an embed token with an
-EffectiveIdentity. Reports are denied by default unless they are mapped to a
-contracted product in REPORT_TO_PRODUCT_MAP.
+EffectiveIdentity. Reports are denied by default unless they are registered in
+the product catalog and, for non-admin users, mapped to an active contracted
+product.
 """
 
 from __future__ import annotations
@@ -58,18 +59,28 @@ class PowerBIUseCase:
         self,
         power_bi_repository: IPowerBIRepository,
         user_zones_repository: Optional[IUserZonesRepository] = None,
+        product_catalog_repository: Optional[Any] = None,
     ):
         self.power_bi_repository = power_bi_repository
         self.user_zones_repository = user_zones_repository
+        self.product_catalog_repository = product_catalog_repository
 
     def execute_for_user(self, user: Dict[str, Any], report_id: str) -> Dict[str, Any]:
         """Issue an embed token with RLS for the requested report."""
         if not user or not user.get("id") or not user.get("role"):
             raise ValueError("Invalid user payload")
 
-        product = REPORT_TO_PRODUCT_MAP.get(report_id)
-        if product is None:
+        report_config = self._resolve_report_config(report_id)
+        if report_config is None:
             raise PermissionError(f"Report {report_id} is not registered")
+        if not bool(report_config.get("is_report_enabled", True)):
+            raise PermissionError("Report is disabled")
+
+        product = report_config["name"]
+        workspace_id = report_config.get("powerbi_workspace_id") or self.power_bi_repository.group
+        tenant_id = report_config.get("powerbi_tenant_id")
+        if tenant_id and hasattr(self.power_bi_repository, "set_tenant_id"):
+            self.power_bi_repository.set_tenant_id(tenant_id)
 
         role = user.get("role")
         if role != "Admin":
@@ -99,7 +110,7 @@ class PowerBIUseCase:
 
         try:
             raw_response = self.power_bi_repository.generate_embed_token_with_rls(
-                workspace_id=self.power_bi_repository.group,
+                workspace_id=workspace_id,
                 report_id=report_id,
                 identity=identity,
             )
@@ -117,7 +128,7 @@ class PowerBIUseCase:
                 message,
             )
             raw_response = self.power_bi_repository.generate_embed_token_with_rls(
-                workspace_id=self.power_bi_repository.group,
+                workspace_id=workspace_id,
                 report_id=report_id,
                 identity=None,
             )
@@ -130,6 +141,29 @@ class PowerBIUseCase:
             "id": raw_response.get("reportId", report_id),
             "tokenId": raw_response.get("tokenId"),
             "tokenExpiry": raw_response.get("tokenExpiry"),
+            "productName": product,
+            "displayName": report_config.get("display_name") or product,
+        }
+
+    def _resolve_report_config(self, report_id: str) -> Optional[Dict[str, Any]]:
+        if self.product_catalog_repository is not None:
+            try:
+                config = self.product_catalog_repository.get_report_config(report_id)
+                if config:
+                    return config
+            except Exception:
+                logging.exception("PowerBI report catalog lookup failed; using fallback map")
+
+        product = REPORT_TO_PRODUCT_MAP.get(report_id)
+        if product is None:
+            return None
+        return {
+            "name": product,
+            "display_name": product,
+            "powerbi_report_id": report_id,
+            "powerbi_workspace_id": self.power_bi_repository.group,
+            "powerbi_tenant_id": None,
+            "is_report_enabled": True,
         }
 
     def _build_identity(self, user: Dict[str, Any], product_name: str) -> tuple[Dict[str, Any], int]:

@@ -117,6 +117,15 @@ class UserSqlAdapter(IUserSqlRepository):
                 up.expiration,
                 up.amount_cop,
                 up.enable AS product_enable,
+                p.display_name AS product_display_name,
+                p.route_path,
+                CONVERT(NVARCHAR(36), p.powerbi_report_id) AS powerbi_report_id,
+                CONVERT(NVARCHAR(36), p.powerbi_workspace_id) AS powerbi_workspace_id,
+                CONVERT(NVARCHAR(36), p.powerbi_tenant_id) AS powerbi_tenant_id,
+                p.icon,
+                p.display_order,
+                COALESCE(p.is_report_enabled, 1) AS is_report_enabled,
+                p.description,
                 (
                     SELECT uz.cod_dep, uz.cod_mun, uz.enable
                     FROM dbo.User_Zones uz
@@ -191,6 +200,15 @@ class UserSqlAdapter(IUserSqlRepository):
             "expiration": self._format_datetime(prod_row.get("expiration")),
             "amount_cop": float(prod_row["amount_cop"] or 0),
             "zones": self._zones_from_json(prod_row.get("zones_json")),
+            "display_name": prod_row.get("product_display_name"),
+            "route_path": prod_row.get("route_path"),
+            "powerbi_report_id": prod_row.get("powerbi_report_id"),
+            "powerbi_workspace_id": prod_row.get("powerbi_workspace_id"),
+            "powerbi_tenant_id": prod_row.get("powerbi_tenant_id"),
+            "icon": prod_row.get("icon"),
+            "display_order": int(prod_row.get("display_order") or 100),
+            "is_report_enabled": bool(prod_row.get("is_report_enabled", True)),
+            "description": prod_row.get("description"),
         }
 
     def _zones_from_json(self, zones_json) -> list[dict]:
